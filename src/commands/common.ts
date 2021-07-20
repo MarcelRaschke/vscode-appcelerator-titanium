@@ -11,6 +11,7 @@ export enum Commands {
 	CheckForUpdates = 'titanium.updates.checkAll',
 	Clean = 'titanium.clean',
 	CreateApp = 'titanium.create.application',
+	CreateKeystore = 'titanium.create.keystore',
 	CreateModule = 'titanium.create.module',
 	Debug = 'titanium.build.debug',
 	DisableLiveView = 'titanium.build.setLiveViewDisabled',
@@ -21,22 +22,24 @@ export enum Commands {
 	GenerateAlloyStyle = 'titanium.alloy.generate.style',
 	GenerateAlloyView = 'titanium.alloy.generate.view',
 	GenerateAlloyWidget = 'titanium.alloy.generate.widget',
-	GenerateAutocomplete = 'titanium.generate.autocompleteSuggestions',
+	GenerateTask = 'titanium.task.generate',
 	InstallAllUpdates = 'titanium.updates.installAll',
 	InstallUpdate = 'titanium.updates.install',
-	OpenAppOnDashboard = 'titanium.openDashboard',
+	InsertCommandId = 'titanium.insertCodeAction',
+	InsertI18nStringCommandId = 'titanium.insertI18nStringCodeAction',
 	OpenAllRelatedFiles = 'titanium.alloy.open.allRelatedFiles',
 	OpenRelatedController = 'titanium.alloy.open.relatedController',
 	OpenRelatedStyle = 'titanium.alloy.open.relatedStyle',
 	OpenRelatedView = 'titanium.alloy.open.relatedView',
 	OpenReleaseNotes = 'titanium.updates.openReleaseNotes',
+	OpenUrl = 'titanium.openUrl',
 	Package = 'titanium.package.run',
 	RefreshExplorer = 'titanium.explorer.refresh',
-	RefreshUpdates = 'titanium.updateExplorer.refresh',
+	RefreshHelp = 'titanium.helpExplorer.refresh',
 	SelectUpdates = 'titanium.updates.select',
 	SetLogLevel = 'titanium.build.setLogLevel',
 	StopBuild = 'titanium.build.stop',
-	ShowUpdatesView = 'titanium.view.updateExplorer.focus',
+	ShowUpdates = 'titanium.updates.reveal',
 }
 
 export class UserCancellation extends Error {
@@ -54,6 +57,10 @@ export class InteractionError extends Error {
  * Check Appcelerator login and prompt if necessary.
  */
 export function checkLogin (): void {
+	if (ExtensionContainer.isUsingTi()) {
+		return;
+	}
+
 	if (!ExtensionContainer.appc.isUserLoggedIn()) {
 		window.showInformationMessage('Please log in to the Appcelerator platform');
 		const error = new InteractionError('You are not logged in. Please log in to continue');
@@ -63,7 +70,7 @@ export function checkLogin (): void {
 		error.interactionChoices.push({
 			title: 'Login',
 			run: () => {
-				ExtensionContainer.terminal.runCommand([ 'login' ], { forceTerminal: true });
+				ExtensionContainer.terminal.runCommand([ 'login' ]);
 			}
 		});
 		throw error;

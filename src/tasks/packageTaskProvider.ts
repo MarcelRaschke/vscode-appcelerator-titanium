@@ -1,12 +1,18 @@
-import * as vscode from 'vscode';
 import * as path from 'path';
 import { CommandTaskProvider, TitaniumTaskBase, TitaniumTaskDefinitionBase, TitaniumBuildBase } from './commandTaskProvider';
 import { Helpers } from './helpers';
 import { TaskExecutionContext } from './tasksHelper';
 import { selectDistributionTarget } from '../quickpicks/build/common';
+import { DeploymentTarget } from '../types/cli';
+import { Command } from './commandBuilder';
+import { promptForWorkspaceFolder } from '../quickpicks';
 
 export interface PackageTask extends TitaniumTaskBase {
 	definition: PackageTaskDefinitionBase;
+}
+
+export interface AppPackageTaskDefinitionBase extends TitaniumTaskDefinitionBase {
+	titaniumBuild: AppPackageTaskTitaniumBuildBase;
 }
 
 export interface PackageTaskDefinitionBase extends TitaniumTaskDefinitionBase {
@@ -22,7 +28,7 @@ export interface ModulePackageTaskTitaniumBuildBase extends PackageTaskTitaniumB
 }
 
 export interface AppPackageTaskTitaniumBuildBase extends PackageTaskTitaniumBuildBase {
-	target?: 'dist-appstore' | 'dist-adhoc' | 'dist-playstore';
+	target?: DeploymentTarget;
 	projectType?: 'app';
 }
 
@@ -32,11 +38,19 @@ export class PackageTaskProvider extends CommandTaskProvider {
 		super('titanium-package', helpers);
 	}
 
-	public async resolveTaskInformation (context: TaskExecutionContext, task: PackageTask): Promise<string> {
+	public async resolveTaskInformation (context: TaskExecutionContext, task: PackageTask): Promise<Command> {
 		const { definition } = task;
 
 		if (!definition.titaniumBuild.projectDir) {
-			definition.titaniumBuild.projectDir = vscode.workspace.rootPath!;
+			const folderDetectOptions = { apps: true, modules: true };
+
+			if (definition.titaniumBuild.projectType === 'app') {
+				folderDetectOptions.modules = false;
+			} else if (definition.titaniumBuild.projectType === 'module') {
+				folderDetectOptions.apps = false;
+			}
+			const { folder } = await promptForWorkspaceFolder(folderDetectOptions);
+			definition.titaniumBuild.projectDir = folder.uri.fsPath;
 		}
 
 		const helper = this.getHelper(definition.titaniumBuild.platform);

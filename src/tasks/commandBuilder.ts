@@ -1,10 +1,21 @@
 import { ShellQuotedString, ShellQuoting } from 'vscode';
 
+export interface Command {
+	args: string[];
+	command: string;
+	environment: Record<string, string>;
+}
 export class CommandBuilder {
+	public command: string;
 	private readonly args: ShellQuotedString[] = [];
+	private readonly environmentOptions: Record<string, string> = {};
 
-	public static create (...args: (string | ShellQuotedString | undefined)[]): CommandBuilder {
-		const builder = new CommandBuilder();
+	constructor (command: string) {
+		this.command = command;
+	}
+
+	public static create (command: string, ...args: (string | ShellQuotedString | undefined)[]): CommandBuilder {
+		const builder = new CommandBuilder(command);
 
 		if (args !== undefined) {
 			for (const arg of args) {
@@ -17,19 +28,25 @@ export class CommandBuilder {
 
 	private addArg (arg: string | ShellQuotedString | undefined): CommandBuilder {
 		if (typeof (arg) === 'string') {
-			if (arg) { // Quoted strings can be added as empty, but withArg will not allow an empty string arg
-				this.args.push(
-					{
-						value: arg,
-						quoting: ShellQuoting.Escape
-					}
-				);
-			}
+			this.args.push(
+				{
+					value: arg,
+					quoting: ShellQuoting.Escape
+				}
+			);
 		} else if (arg !== undefined) {
 			this.args.push(arg);
 		}
 
 		return this;
+	}
+
+	private toEnvironmentArg (value: string, quote = false) {
+		if (process.platform === 'win32') {
+			return quote ? `"%${value}%"` : `%${value}%`;
+		} else {
+			return quote ? `"$${value}"` : `$${value}`;
+		}
 	}
 
 	public addOption (option: string, value: string): CommandBuilder {
@@ -58,9 +75,20 @@ export class CommandBuilder {
 		return this;
 	}
 
-	public resolve (): string {
-		return this.args.map(arg => {
-			return arg.quoting === ShellQuoting.Strong ? `"${arg.value}"` : arg.value;
-		}).join(' ');
+	public addEnvironmentArgument(option: string, value: string, quote = false, environmentName = option.replace(/-/g, '').toUpperCase()): CommandBuilder {
+		this.environmentOptions[environmentName] = value;
+		this.addOption(option, this.toEnvironmentArg(environmentName, quote));
+
+		return this;
+	}
+
+	public resolve (): Command {
+		return {
+			command: this.command,
+			environment: this.environmentOptions,
+			args: this.args.map(arg => {
+				return arg.quoting === ShellQuoting.Strong ? `"${arg.value}"` : arg.value;
+			})
+		};
 	}
 }

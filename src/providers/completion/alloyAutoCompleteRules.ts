@@ -1,67 +1,74 @@
-import * as walkSync from 'klaw-sync';
+import walkSync from 'klaw-sync';
 import * as path from 'path';
 import * as utils from '../../utils';
 
 import { CompletionItem, CompletionItemKind, workspace, Range } from 'vscode';
 import { ExtensionContainer } from '../../container';
 import { parseXmlString } from '../../common/utils';
+import { Project } from '../..//project';
+import { pathExists } from 'fs-extra';
 
 interface AlloyAutoCompleteRule {
 	regExp: RegExp;
-	getCompletions: (range?: Range) => Promise<CompletionItem[]>|CompletionItem[];
+	getCompletions: (project: Project, range?: Range) => Promise<CompletionItem[]>|CompletionItem[];
 	requireRange?: boolean;
 	rangeRegex?: RegExp;
 }
 
 export const cfgAutoComplete: AlloyAutoCompleteRule = {
 	regExp: /Alloy\.CFG\.([-a-zA-Z0-9-_/]*)[,]?$/,
-	async getCompletions () {
-		const cfgPath = path.join(utils.getAlloyRootPath(), 'config.json');
+	async getCompletions (projectDir) {
+		const cfgPath = path.join(projectDir.filePath, 'app', 'config.json');
 		const completions: CompletionItem[] = [];
-		if (utils.fileExists(cfgPath)) {
-			const document = await workspace.openTextDocument(cfgPath);
-			const cfgObj = JSON.parse(document.getText());
-			const deconstructedConfig = {};
+		if (!await pathExists(cfgPath)) {
+			return completions;
+		}
+		const document = await workspace.openTextDocument(cfgPath);
+		const cfgObj = JSON.parse(document.getText());
+		const deconstructedConfig = {};
 
-			for (const [ key, value ] of Object.entries(cfgObj)) {
-				if (key === 'global' || key.startsWith('os:') || key.startsWith('env:')) {
-					// Ignore and traverse
-					Object.assign(deconstructedConfig, value);
-				}
+		for (const [ key, value ] of Object.entries(cfgObj)) {
+			if (key === 'global' || key.startsWith('os:') || key.startsWith('env:')) {
+				// Ignore and traverse
+				Object.assign(deconstructedConfig, value);
 			}
+		}
 
-			const allKeys = utils.getAllKeys(deconstructedConfig);
-			for (const key of allKeys) {
-				completions.push({
-					label: key,
-					kind: CompletionItemKind.Value
-				});
-			}
+		const allKeys = utils.getAllKeys(deconstructedConfig);
+		for (const key of allKeys) {
+			completions.push({
+				label: key,
+				kind: CompletionItemKind.Value
+			});
 		}
 		return completions;
 	}
 };
 
 export const i18nAutoComplete: AlloyAutoCompleteRule = {
-	regExp: /(L\(|titleid\s*[:=]\s*)["'](\w*["']?)$/,
-	async getCompletions () {
-		const defaultLang = ExtensionContainer.config.project.defaultI18nLanguage;
-		const i18nPath = utils.getI18nPath();
+	regExp: /(L\(|(?:hinttext|title|text)id\s*[:=]\s*)["'](\w*["']?)$/,
+	async getCompletions (projectDir) {
+		const defaultLang = ExtensionContainer.config?.project.defaultI18nLanguage || 'en';
+		const i18nPath = await projectDir.getI18NPath();
 		const completions: CompletionItem[] = [];
-		if (utils.directoryExists(i18nPath)) {
-			const i18nStringPath = path.join(i18nPath, defaultLang, 'strings.xml');
-			if (utils.fileExists(i18nStringPath)) {
-				const document = await workspace.openTextDocument(i18nStringPath);
-				const result = await parseXmlString(document.getText()) as { resources: { string: { $: { name: string }; _: string }[] } };
-				if (result && result.resources && result.resources.string) {
-					for (const value of result.resources.string) {
-						completions.push({
-							label: value.$.name,
-							kind: CompletionItemKind.Reference,
-							detail: value._
-						});
-					}
-				}
+		if (!i18nPath || !await pathExists(i18nPath)) {
+			return completions;
+		}
+
+		const i18nStringPath = path.join(i18nPath, defaultLang, 'strings.xml');
+
+		if (!await pathExists(i18nStringPath)) {
+			return completions;
+		}
+		const document = await workspace.openTextDocument(i18nStringPath);
+		const result = await parseXmlString(document.getText()) as { resources: { string: { $: { name: string }; _: string }[] } };
+		if (result && result.resources && result.resources.string) {
+			for (const value of result.resources.string) {
+				completions.push({
+					label: value.$.name,
+					kind: CompletionItemKind.Reference,
+					detail: value._
+				});
 			}
 		}
 		return completions;
@@ -72,16 +79,16 @@ export const imageAutoComplete: AlloyAutoCompleteRule = {
 	regExp: /image\s*[:=]\s*["']([\w\s\\/\-_():.]*)['"]?$/,
 	requireRange: true,
 	rangeRegex: /([\w/.$]+)/,
-	getCompletions (range) {
-		const alloyRootPath = utils.getAlloyRootPath();
-		const assetPath = path.join(alloyRootPath, 'assets');
+	async getCompletions (projectDir, range) {
+		const rootPath = await projectDir.isAlloyProject() ? path.join(projectDir.filePath, 'app') : projectDir.filePath;
+		const assetPath = path.join(rootPath, 'assets');
 		const completions: CompletionItem[] = [];
 		// limit search to these sub-directories
-		let paths = [ 'images', 'iphone', 'android', 'windows' ];
-		paths = paths.map(aPath => path.join(assetPath, aPath));
+		let paths = [ 'images', 'iphone', 'android' ];
+		paths = [ ...paths.map(aPath => path.join(assetPath, aPath)), assetPath ];
 
 		for (const imgPath of paths) {
-			if (!utils.directoryExists(imgPath)) {
+			if (!await pathExists(imgPath)) {
 				continue;
 			}
 			const files = walkSync(imgPath, {

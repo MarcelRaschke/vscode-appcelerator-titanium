@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import appc from '../appc';
 import { Platform } from '../types/common';
 import { platforms } from '../utils';
-import { BaseNode } from './nodes/baseNode';
-import { PlatformNode } from './nodes/platformNode';
+import { BaseNode, PlatformNode } from './nodes';
+import { RecentNode } from './nodes/recentNode';
 
 export default class DeviceExplorer implements vscode.TreeDataProvider<BaseNode> {
 
@@ -13,24 +13,26 @@ export default class DeviceExplorer implements vscode.TreeDataProvider<BaseNode>
 	public readonly onDidChangeTreeData: vscode.Event<BaseNode|undefined> = this._onDidChangeTreeData.event;
 
 	private platforms: Map<string, PlatformNode> = new Map();
+	private recentNode = new RecentNode('Recent Builds');
 
 	public async refresh (): Promise<void> {
-		return vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Reading Appcelerator environment ...' }, () => {
-			return new Promise((resolve, reject) => {
-				// fire a change event so that the child nodes of targets display the refresh message
+		return vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Reading Appcelerator environment ...' }, async () => {
+			// fire a change event so that the child nodes of targets display the refresh message
+			this._onDidChangeTreeData.fire(undefined);
+			try {
+				await appc.getInfo();
 				this._onDidChangeTreeData.fire(undefined);
-				appc.getInfo((error, info) => {
-					if (info) {
-						this._onDidChangeTreeData.fire(undefined);
-						vscode.window.showInformationMessage('Updated device explorer');
-						return resolve();
-					} else {
-						vscode.window.showErrorMessage('Error fetching Appcelerator environment');
-						return reject();
-					}
-				});
-			});
+				vscode.window.showInformationMessage('Updated device explorer');
+				return Promise.resolve();
+			} catch (error) {
+				vscode.window.showErrorMessage('Error fetching Appcelerator environment');
+				return Promise.reject();
+			}
 		});
+	}
+
+	public refreshRecentBuilds (): void {
+		this._onDidChangeTreeData.fire(this.recentNode);
 	}
 
 	public getTreeItem (element: BaseNode): vscode.TreeItem {
@@ -49,6 +51,8 @@ export default class DeviceExplorer implements vscode.TreeDataProvider<BaseNode>
 			this.platforms.set(platform, node);
 			elements.push(node);
 		}
+
+		elements.push(this.recentNode);
 		return Promise.resolve(elements);
 	}
 }

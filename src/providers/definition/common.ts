@@ -1,27 +1,24 @@
 import * as path from 'path';
 import * as related from '../../related';
-import * as utils from '../../utils';
-
-import { TextDocument, workspace } from 'vscode';
+import { TextDocument } from 'vscode';
 import { ExtensionContainer } from '../../container';
+import { Project } from '../../project';
 
 export interface DefinitionSuggestion {
 	regExp: RegExp;
 	i18nString?: boolean;
-	files (document: TextDocument, text: string, value: string): string[];
-	files (document: TextDocument, text: string, value?: string): string[];
-	files (document: TextDocument, text?: string, value?: string): string[];
+	files (project: Project, document: TextDocument, text?: string, value?: string): Promise<string[]>|string[];
 	definitionRegExp? (text: string): RegExp;
 	title? (fileName: string): string;
 	insertText? (text: string): string|undefined;
 }
 
-function getRelatedFiles(fileType: string): string[] {
+function getRelatedFiles(project: Project, fileType: string): string[] {
 	const relatedFiles: string[] = [];
 	if (fileType === 'tss') {
-		relatedFiles.push(path.join(utils.getAlloyRootPath(), 'styles', 'app.tss'));
+		relatedFiles.push(path.join(project.filePath, 'app', 'styles', 'app.tss'));
 	}
-	const relatedFile = related.getTargetPath(fileType);
+	const relatedFile = related.getTargetPath(project, fileType);
 	if (relatedFile) {
 		relatedFiles.push(relatedFile);
 	}
@@ -31,44 +28,49 @@ function getRelatedFiles(fileType: string): string[] {
 export const viewSuggestions: DefinitionSuggestion[] = [
 	{ // class
 		regExp: /class=["'][\s0-9a-zA-Z-_^]*$/,
-		files (): string[] {
-			return getRelatedFiles('tss');
+		files (project: Project): string[] {
+			return getRelatedFiles(project, 'tss');
 		},
 		definitionRegExp (text: string): RegExp {
+			// eslint-disable-next-line security/detect-non-literal-regexp
 			return new RegExp(`["']\\.${text}["'[]`, 'g');
 		},
 		title (fileName: string): string {
 			return `Generate style (${fileName})`;
 		},
 		insertText (text: string): string {
-			let insertText = ExtensionContainer.config.codeTemplates.tssClass;
+			// eslint-disable-next-line no-template-curly-in-string
+			let insertText = ExtensionContainer.config?.codeTemplates.tssClass || '\\n\'.${text}\': {\\n}\\n';
 			insertText = insertText.replace(/(\${text})/g, text).replace(/\\n/g, '\n');
 			return insertText;
 		}
 	},
 	{ // id
 		regExp: /id=["'][\s0-9a-zA-Z-_^]*$/,
-		files (): string[] {
-			return getRelatedFiles('tss');
+		files (project: Project): string[] {
+			return getRelatedFiles(project, 'tss');
 		},
 		definitionRegExp (text: string): RegExp {
+			// eslint-disable-next-line security/detect-non-literal-regexp
 			return new RegExp(`["']#${text}["'[]`, 'g');
 		},
 		title (fileName: string): string {
 			return `Generate style (${fileName})`;
 		},
 		insertText (text: string): string {
-			let insertText = ExtensionContainer.config.codeTemplates.tssId;
+			// eslint-disable-next-line no-template-curly-in-string
+			let insertText = ExtensionContainer.config?.codeTemplates.tssId || '\\n\'#${text}\': {\\n}\\n';
 			insertText = insertText.replace(/(\${text})/g, text).replace(/\\n/g, '\n');
 			return insertText;
 		}
 	},
 	{ // tag
 		regExp: /<[A-Z][A-Za-z]*$/,
-		files (): string[] {
-			return getRelatedFiles('tss');
+		files (project: Project): string[] {
+			return getRelatedFiles(project, 'tss');
 		},
 		definitionRegExp (text: string): RegExp {
+			// eslint-disable-next-line security/detect-non-literal-regexp
 			return new RegExp(`["']${text}`, 'g');
 		},
 		title (fileName: string): string {
@@ -79,47 +81,63 @@ export const viewSuggestions: DefinitionSuggestion[] = [
 				|| text.startsWith('/')) {
 				return;
 			}
-			let insertText = ExtensionContainer.config.codeTemplates.tssTag;
+			// eslint-disable-next-line no-template-curly-in-string
+			let insertText = ExtensionContainer.config?.codeTemplates.tssTag || '\\n\'${text}\': {\\n}\\n';
 			insertText = insertText.replace(/(\${text})/g, text).replace(/\\n/g, '\n');
 			return insertText;
 		}
 	},
 	{ // handler
 		regExp: /on(.*?)=["'][A-Za-z]*$/,
-		files (): string[] {
-			return getRelatedFiles('js');
+		files (project: Project): string[] {
+			return getRelatedFiles(project, 'js');
 		},
 		definitionRegExp (text: string): RegExp {
+			// eslint-disable-next-line security/detect-non-literal-regexp
 			return new RegExp(`function ${text}\\s*?\\(`);
 		},
 		title (fileName: string): string {
 			return `Generate function (${fileName})`;
 		},
 		insertText (text: string): string {
-			let insertText = ExtensionContainer.config.codeTemplates.jsFunction;
+			// eslint-disable-next-line no-template-curly-in-string
+			let insertText = ExtensionContainer.config?.codeTemplates.jsFunction || '\\nfunction ${text}(e){\\n}\\n';
 			insertText = insertText.replace(/(\${text})/g, text).replace(/\\n/g, '\n');
 			return insertText;
 		}
 	},
 	{ // widget
-		regExp: /<Widget[\s0-9a-zA-Z-_^='"]*src=["']$/,
-		files (document: TextDocument, text: string): string[] {
-			return [ document.fileName.replace(/app\/(.*)$/, `app/widgets/${text}/controllers/widget.js`) ];
+		regExp: /<Widget[\s0-9a-zA-Z-_^='"]*src=["']/,
+		files (project: Project, document: TextDocument, text: string): string[] {
+
+			return [ path.join(project.filePath, 'app', 'widgets', text, 'controllers', 'widget.js') ];
 		}
 	},
 	{ // require
 		regExp: /<Require[\s0-9a-zA-Z-_^='"]*src=["']/,
-		files (document: TextDocument, text: string): string[] {
-			return [ document.fileName.replace(/app\/(.*)$/, `app/controllers/${text}.js`) ];
+		files (project: Project, document: TextDocument, text: string): string[] {
+			return [ path.join(project.filePath, 'app', 'controllers', `${text}.js`) ];
 		}
 	},
 	{ // i18n
-		regExp: /[:\s=,>)("]L\(["'][\w0-9_-]*$/,
+		regExp: /[:\s=,>)("]L\(["'][\w0-9_-]*/,
 		definitionRegExp(text: string): RegExp {
-			return new RegExp(`name=["']${text}["']>(.*)?</`, 'g');
+			// Strip the brackets if they're included
+			if (text.includes('(')) {
+				const matches = /\(["'](\S+)["']\)/.exec(text);
+				text = matches?.[1] as string;
+
+			}
+			// eslint-disable-next-line security/detect-non-literal-regexp
+			return new RegExp(`name=["']${text}["']>.*</`, 'g');
 		},
-		files(): string[] {
-			return [ path.join(utils.getI18nPath(), ExtensionContainer.config.project.defaultI18nLanguage, 'strings.xml') ];
+		async files(project: Project): Promise<string[]> {
+			const i18nPath = await project.getI18NPath();
+			if (!i18nPath) {
+				return [];
+			}
+			const defaultLang = ExtensionContainer.config?.project.defaultI18nLanguage || 'en';
+			return [ path.join(i18nPath, defaultLang, 'strings.xml') ];
 		},
 		i18nString: true
 	}

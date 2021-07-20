@@ -3,15 +3,19 @@ import { EditorView, VSBrowser, WebDriver } from 'vscode-extension-tester';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import * as tmp from 'tmp';
-import { ProjectCreator } from '../../util/create';
+import { Project } from '../../util/project';
 import { dismissNotifications } from '../../util/common';
 
-(process.env.JENKINS ? describe.skip : describe)('Module creation', function () {
+describe('Module creation', function () {
+	this.timeout(30000);
+
 	let browser: VSBrowser;
+	let creator: Project;
 	let driver: WebDriver;
 	let tempDirectory: tmp.DirResult;
 
-	beforeEach(async function () {
+	before(async function () {
+		this.timeout(180000);
 		browser = VSBrowser.instance;
 		driver = browser.driver;
 		const editorView = new EditorView();
@@ -19,17 +23,22 @@ import { dismissNotifications } from '../../util/common';
 		await browser.waitForWorkbench();
 		tempDirectory = tmp.dirSync();
 		await dismissNotifications();
+		creator = new Project(driver);
+		await creator.reset();
+		await creator.waitForGetStarted();
 	});
 
 	afterEach(async function () {
-		await fs.remove(tempDirectory.name);
+		if (tempDirectory) {
+			await fs.remove(tempDirectory.name);
+		}
 	});
 
 	it('should be able to create a module project', async function () {
 		this.timeout(90000);
 
 		const name = 'vscode-e2e-test-module';
-		const creator = new ProjectCreator(driver);
+
 		await creator.createModule({
 			id: 'com.axway.e2e',
 			folder: tempDirectory.name,
@@ -51,7 +60,6 @@ import { dismissNotifications } from '../../util/common';
 		this.timeout(90000);
 
 		const name = 'vscode-e2e-test-module';
-		const creator = new ProjectCreator(driver);
 
 		await creator.createModule({
 			id: 'com.axway.e2e',

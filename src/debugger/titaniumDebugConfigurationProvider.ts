@@ -1,8 +1,9 @@
-import * as getPort from 'get-port';
+import getPort from 'get-port';
+import { ExtensionContainer } from '../container';
 import * as vscode from 'vscode';
-import * as which from 'which';
+import which from 'which';
 import { UserCancellation } from '../commands';
-import { selectPlatform } from '../quickpicks/common';
+import { promptForWorkspaceFolder, selectPlatform } from '../quickpicks/common';
 import { AppBuildTaskDefinitionBase } from '../tasks/buildTaskProvider';
 import { getTasks } from '../tasks/tasksHelper';
 
@@ -22,33 +23,31 @@ function validateTask (task: AppBuildTaskDefinitionBase, ourConfig: vscode.Debug
 export class TitaniumDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
 
 	public async resolveDebugConfiguration (folder: vscode.WorkspaceFolder | undefined, config: vscode.DebugConfiguration): Promise<vscode.DebugConfiguration> {
-		if (!config.projectDir) {
-			config.projectDir = '${workspaceFolder}'; // eslint-disable-line no-template-curly-in-string
-		}
-
 		const ourConfig: vscode.DebugConfiguration = {
 			...config
 		};
 
 		if (!ourConfig.port) {
-			ourConfig.port = 9000;
-			ourConfig.debugPort = 9000;
+			// randomly assign the port as if a debug session is initiated quickly after a previous
+			// one on Android it can lead to the debugger failing to startup as the port is in use
+			const port = await getPort();
+			ourConfig.port = port;
+			ourConfig.debugPort = port;
 		} else {
 			ourConfig.debugPort = ourConfig.port;
-		}
-
-		try {
-			const port = await getPort({ port: ourConfig.port });
-			if (port !== ourConfig.port) {
-				ourConfig.port = port;
-				ourConfig.debugPort = ourConfig.port;
+			try {
+				const port = await getPort({ port: ourConfig.port });
+				if (port !== ourConfig.port) {
+					throw new Error(`Selected port ${ourConfig.port} is in use`);
+				}
+			} catch (error) {
+				throw new Error(`Selected port ${ourConfig.port} is in use`);
 			}
-		} catch (error) {
-			throw new Error('Failed to start debug session as could not find a free port. Please set a "port" value in your debug configuration.');
 		}
 
 		if (config.preLaunchTask) {
-			const preLaunchTask = getTasks<AppBuildTaskDefinitionBase>(vscode.workspace.rootPath!).find(task => task.label === config.preLaunchTask);
+			const { folder } = await promptForWorkspaceFolder();
+			const preLaunchTask = getTasks<AppBuildTaskDefinitionBase>(folder).find(task => task.label === config.preLaunchTask);
 
 			if (!preLaunchTask) {
 				throw new Error(`Unable to find a preLaunchTask named ${config.preLaunchTask}`);
@@ -66,6 +65,13 @@ export class TitaniumDebugConfigurationProvider implements vscode.DebugConfigura
 				ourConfig.debugPort = preLaunchTask.titaniumBuild.debugPort;
 			}
 		}
+
+		if (!ourConfig.projectDir) {
+			ourConfig.projectDir = folder?.uri.fsPath || (await promptForWorkspaceFolder()).folder.uri.fsPath;
+		}
+
+		// set the debug port we're using so that we can extract it in the TaskProvider
+		ExtensionContainer.debugPorts.set(ourConfig.projectDir, ourConfig.debugPort);
 
 		if (!ourConfig.platform) {
 			try {

@@ -2,44 +2,15 @@ import * as vscode from 'vscode';
 import { DeviceNode, OSVerNode, PlatformNode, TargetNode } from '../explorer/nodes';
 import { checkLogin, handleInteractionError, InteractionError } from './common';
 import { selectPlatform } from '../quickpicks';
-import { getBuildTask, Platform } from '../tasks/tasksHelper';
-import { AppBuildTask, AppBuildTaskTitaniumBuildBase } from '../tasks/buildTaskProvider';
+import { getBuildTask } from '../tasks/tasksHelper';
+import { AppBuildTask } from '../tasks/buildTaskProvider';
 import { ExtensionContainer } from '../container';
 import { WorkspaceState } from '../constants';
-import { nameForPlatform, nameForTarget } from '../utils';
-import appc from '../appc';
+import { getDeviceNameFromId, nameForPlatform, nameForTarget } from '../utils';
+import { LastBuildState, Platform } from '../types/common';
+import { promptForWorkspaceFolder } from '../quickpicks/common';
 
-function getDeviceNameFromId (deviceID: string, platform: Platform, target: string): string {
-	let deviceName: string|undefined;
-	if (platform === 'android' && target === 'device') {
-		deviceName = (appc.androidDevices().find(device => device.id === deviceID))?.name;
-	} else if (platform === 'android' && target === 'emulator') {
-		deviceName = (appc.androidEmulators().AVDs.find(emulator => emulator.id === deviceID))?.name;
-	} else if (platform === 'ios' && target === 'device') {
-		deviceName = (appc.iOSDevices().find(device => device.udid === deviceID))?.name;
-	} else if (platform === 'ios' && target === 'simulator') {
-		for (const simVer of appc.iOSSimulatorVersions()) {
-			deviceName = (appc.iOSSimulators()[simVer].find(simulator => simulator.udid === deviceID))?.name;
-			if (deviceName) {
-				deviceName = `${deviceName} (${simVer})`;
-				break;
-			}
-		}
-	}
-
-	if (!deviceName) {
-		throw new Error(`Unable to find a name for ${deviceID}`);
-	}
-
-	return deviceName;
-}
-
-interface LastBuildState extends AppBuildTaskTitaniumBuildBase {
-	deviceId: string;
-	target: 'device' | 'emulator' | 'simulator';
-}
-
-export async function buildApplication (node: DeviceNode | OSVerNode | PlatformNode | TargetNode): Promise<void> {
+export async function buildApplication (node?: DeviceNode | OSVerNode | PlatformNode | TargetNode, folder?: vscode.WorkspaceFolder): Promise<void> {
 	try {
 		checkLogin();
 
@@ -58,8 +29,12 @@ export async function buildApplication (node: DeviceNode | OSVerNode | PlatformN
 			}
 		}
 
-		const buildChoice = node?.platform as string || (await selectPlatform(lastBuildDescription)).id;
+		if (!folder) {
+			folder = (await promptForWorkspaceFolder()).folder;
+		}
 
+		const projectDir = folder.uri.fsPath;
+		const buildChoice = node?.platform as string || (await selectPlatform(lastBuildDescription)).id;
 		const platform = buildChoice === 'last' ? lastBuildState?.platform as Platform : buildChoice as Platform;
 
 		const taskDefinition: AppBuildTask = {
@@ -67,7 +42,7 @@ export async function buildApplication (node: DeviceNode | OSVerNode | PlatformN
 				titaniumBuild: {
 					projectType: 'app',
 					platform,
-					projectDir: vscode.workspace.rootPath!
+					projectDir
 				},
 				type: 'titanium-build',
 				name: `Build ${platform}`
@@ -78,11 +53,12 @@ export async function buildApplication (node: DeviceNode | OSVerNode | PlatformN
 			presentationOptions: {},
 			problemMatchers: [],
 			runOptions: {},
-			scope: vscode.TaskScope.Workspace
+			scope: folder
 		};
 
 		if (buildChoice === 'last') {
-			Object.assign(taskDefinition.definition.titaniumBuild, lastBuildState);
+			// copy over the details from the last build, setting projectDir to the newly selected one
+			Object.assign(taskDefinition.definition.titaniumBuild, lastBuildState, { projectDir });
 		} else {
 			if (node?.targetId) {
 				taskDefinition.definition.titaniumBuild.target = node.targetId as 'device' | 'emulator' | 'simulator';

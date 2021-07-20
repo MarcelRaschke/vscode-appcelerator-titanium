@@ -1,19 +1,28 @@
 import * as vscode from 'vscode';
-import { DeviceNode, OSVerNode, PlatformNode, TargetNode } from '../explorer/nodes';
+import { DistributeNode, PlatformNode } from '../explorer/nodes';
 import { checkLogin, handleInteractionError, InteractionError } from './common';
 
-import { selectPlatform } from '../quickpicks/common';
-import { Platform, getPackageTask } from '../tasks/tasksHelper';
+import { promptForWorkspaceFolder, selectPlatform } from '../quickpicks/common';
+import { getPackageTask } from '../tasks/tasksHelper';
 import { ExtensionContainer } from '../container';
 import { WorkspaceState } from '../constants';
 import { nameForPlatform, nameForTarget } from '../utils';
 import { PackageTask, AppPackageTaskTitaniumBuildBase } from '../tasks/packageTaskProvider';
+import { Platform } from '../types/common';
+import { DeploymentTarget } from '../types/cli';
 
 interface LastState extends AppPackageTaskTitaniumBuildBase {
-	target: 'dist-appstore' | 'dist-adhoc' | 'dist-playstore';
+	target: DeploymentTarget;
 }
 
-export async function packageApplication (node: DeviceNode | OSVerNode | PlatformNode | TargetNode): Promise<void> {
+function isDistributeNode(node?: PlatformNode | DistributeNode): node is DistributeNode {
+	if (node?.contextValue === 'DistributeNode') {
+		return true;
+	}
+	return false;
+}
+
+export async function packageApplication (node?: PlatformNode | DistributeNode, folder?: vscode.WorkspaceFolder): Promise<void> {
 	try {
 		checkLogin();
 
@@ -24,10 +33,13 @@ export async function packageApplication (node: DeviceNode | OSVerNode | Platfor
 			try {
 				lastDescription = `${nameForPlatform(lastState.platform)} ${nameForTarget(lastState.target)}`;
 			} catch (error) {
-				console.log(error);
 				// Ignore and clear the state, we don't want to error due to a bad state
 				ExtensionContainer.context.workspaceState.update(WorkspaceState.LastBuildState, undefined);
 			}
+		}
+
+		if (!folder) {
+			folder = (await promptForWorkspaceFolder()).folder;
 		}
 
 		const buildChoice = node?.platform as string || (await selectPlatform(lastDescription)).id;
@@ -38,7 +50,7 @@ export async function packageApplication (node: DeviceNode | OSVerNode | Platfor
 				titaniumBuild: {
 					projectType: 'app',
 					platform,
-					projectDir: vscode.workspace.rootPath!
+					projectDir: folder.uri.fsPath
 				},
 				type: 'titanium-package',
 				name: `Package ${platform}`
@@ -54,6 +66,8 @@ export async function packageApplication (node: DeviceNode | OSVerNode | Platfor
 
 		if (buildChoice === 'last') {
 			Object.assign(taskDefinition.definition.titaniumBuild, lastState);
+		} else if (isDistributeNode(node)) {
+			(taskDefinition.definition.titaniumBuild as AppPackageTaskTitaniumBuildBase).target = node.targetId;
 		}
 
 		const task = await getPackageTask(taskDefinition);

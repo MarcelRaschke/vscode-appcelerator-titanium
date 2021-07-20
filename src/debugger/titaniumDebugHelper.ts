@@ -1,10 +1,8 @@
 import * as vscode from 'vscode';
 import { TitaniumDebugConfigurationProvider } from './titaniumDebugConfigurationProvider';
 import { MESSAGE_STRING, Request, TitaniumLaunchRequestArgs, FeedbackOptions, Response } from '../common/extensionProtocol';
-import { BuildAppOptions } from '../types/cli';
 import { ExtensionContainer } from '../container';
 import appc from '../appc';
-import {  runningTasks } from '../tasks/tasksHelper';
 import { Commands } from '../commands';
 
 async function handleCustomEvent(event: vscode.DebugSessionCustomEvent): Promise<void> {
@@ -25,7 +23,7 @@ async function handleCustomEvent(event: vscode.DebugSessionCustomEvent): Promise
 			// on the label, so we need remove that to lookup the task
 			const taskLabel = providedArgs.preLaunchTask.replace('Titanium:', '').trim();
 
-			const runningTask = runningTasks.get(taskLabel);
+			const runningTask = ExtensionContainer.runningTasks.get(taskLabel);
 
 			if (!runningTask) {
 				response.result.isError = true;
@@ -49,7 +47,7 @@ async function handleCustomEvent(event: vscode.DebugSessionCustomEvent): Promise
 					break;
 			}
 		} else if (request.code === 'END') {
-			const providedArgs = request.args as BuildAppOptions & TitaniumLaunchRequestArgs;
+			const providedArgs = request.args as TitaniumLaunchRequestArgs;
 			await vscode.commands.executeCommand(Commands.StopBuild);
 
 			if (providedArgs.platform !== 'android') {
@@ -64,9 +62,9 @@ async function handleCustomEvent(event: vscode.DebugSessionCustomEvent): Promise
 			const tcpPort = `tcp:${providedArgs.port}`;
 
 			if (providedArgs.target === 'emulator') {
-				const { stdout } = await ExtensionContainer.terminal.runInBackground(adbPath, [ 'forward', '--list' ]);
+				const { output } = await ExtensionContainer.terminal.runInBackground(adbPath, [ 'forward', '--list' ]);
 
-				for (const line of stdout.split('\n')) {
+				for (const line of output.split('\n')) {
 					if (!line.includes(tcpPort)) {
 						continue;
 					}

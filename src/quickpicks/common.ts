@@ -1,11 +1,12 @@
 import * as utils from '../utils';
+import * as path from 'path';
 
 import { pathExists, ensureDir } from 'fs-extra';
 import { UpdateInfo } from 'titanium-editor-commons/updates';
-import { InputBoxOptions, QuickPickItem, QuickPickOptions, Uri, window } from 'vscode';
+import { InputBoxOptions, QuickPickItem, QuickPickOptions, Uri, window, workspace, WorkspaceFolder } from 'vscode';
 import { UserCancellation } from '../commands/common';
 import { ExtensionContainer } from '../container';
-import { UpdateChoice } from '../types/common';
+import { Platform, ProjectType } from '../types/common';
 
 export interface CustomQuickPick extends QuickPickItem {
 	label: string;
@@ -52,14 +53,17 @@ export async function yesNoQuestion (options: QuickPickOptions, shouldThrow = fa
 	}
 }
 
-export async function quickPick(items: string[], quickPickOptions?: QuickPickOptions & { canPickMany: true }, customQuickPickOptions?: CustomQuickPickOptions): Promise<string[]>;
+export async function quickPick(items: string[], quickPickOptions: QuickPickOptions & { canPickMany: true }, customQuickPickOptions?: CustomQuickPickOptions): Promise<string[]>;
 export async function quickPick(items: CustomQuickPick[], quickPickOptions?: QuickPickOptions & { canPickMany: true }, customQuickPickOptions?: CustomQuickPickOptions): Promise<CustomQuickPick[]>;
 export async function quickPick(items: string[], quickPickOptions?: QuickPickOptions, customQuickPickOptions?: CustomQuickPickOptions): Promise<string>;
 export async function quickPick(items: CustomQuickPick[], quickPickOptions?: QuickPickOptions, customQuickPickOptions?: CustomQuickPickOptions): Promise<CustomQuickPick>;
+export async function quickPick<T extends CustomQuickPick>(items: T[], quickPickOptions: QuickPickOptions & { canPickMany: true }, customQuickPickOptions?: CustomQuickPickOptions): Promise<T[]>;
 export async function quickPick<T extends CustomQuickPick>(items: T[], quickPickOptions?: QuickPickOptions, customQuickPickOptions?: CustomQuickPickOptions): Promise<T>;
-export async function quickPick<T extends CustomQuickPick> (items: T[], quickPickOptions?: QuickPickOptions, { forceShow = false } = {}): Promise<T> {
+export async function quickPick<T extends CustomQuickPick> (items: T[], quickPickOptions?: QuickPickOptions, { forceShow = false } = {}): Promise<T|T[]> {
 	if (items.length === 1 && !forceShow) {
-		return items[0];
+		// If canPickMany is set to true then we should return the items array as the caller will
+		// expect an array return type
+		return  quickPickOptions?.canPickMany ? items : items[0];
 	}
 	const result = await window.showQuickPick(items, quickPickOptions);
 	if (!result) {
@@ -68,15 +72,15 @@ export async function quickPick<T extends CustomQuickPick> (items: T[], quickPic
 	return result;
 }
 
-export function selectPlatform (lastBuildDescription?: string, filter?: (platform: string) => boolean): Promise<{id: string; label: string}> {
+export function selectPlatform (lastBuildDescription?: string, filter?: (platform: Platform) => boolean): Promise<{id: string; label: string}> {
 	const platforms = utils.platforms().filter(filter ? filter : (): boolean => true).map(platform => ({ label: utils.nameForPlatform(platform) as string, id: platform }));
 	if (lastBuildDescription) {
 		platforms.unshift({
 			label: `Last: ${lastBuildDescription}`,
-			id: 'last'
+			id: 'last' as Platform
 		});
 	}
-	return quickPick(platforms);
+	return quickPick(platforms, { placeHolder: 'Select a platform' });
 }
 
 export async function selectCreationLocation (lastUsed?: string): Promise<Uri> {
@@ -128,30 +132,106 @@ export async function selectCreationLocation (lastUsed?: string): Promise<Uri> {
 	}
 }
 
-export async function selectUpdates (updates: UpdateInfo[]): Promise<UpdateChoice[]> {
-	const choices: UpdateChoice[] = updates
+export async function selectUpdates (updates: UpdateInfo[]): Promise<UpdateInfo[]> {
+	const choices = updates
 		.map(update => ({
-			label: `${update.productName}: ${update.latestVersion}`,
-			action: update.action,
-			latestVersion: update.latestVersion,
-			priority: update.priority,
-			picked: true,
-			productName: update.productName,
 			id: update.productName,
-			currentVersion: update.currentVersion
-		})
-		);
+			label: `${update.productName}: ${update.latestVersion}`,
+			picked: true
+		}));
 
 	const selected = await quickPick(choices, {
 		canPickMany: true,
 		placeHolder: 'Which updates would you like to install?'
 	}, {
-		forceShow: true
+		forceShow: true,
 	});
 
 	if (!selected) {
 		throw new UserCancellation();
 	}
 
-	return choices as UpdateChoice[];
+	const selectedProducts = selected.map(product => product.id);
+
+	return updates.filter(update => {
+		return selectedProducts.includes(update.productName);
+	});
+}
+
+/**
+ * Detects folders in the workspace that are valid Titanium projects.
+ *
+ * @export
+ * @param {Object} [options] - Options to control the types of projects to detect
+ * @param {Object} [options.apps=true] - Detect Titanium app projects
+ * @param {Object} [options.modules=false] - Detect Titanium module projects
+ * @returns {Promise<WorkspaceFolder[]>}
+ */
+export async function getValidWorkspaceFolders({ apps = true, modules = false } = {}): Promise<FolderDetails[]> {
+	const { workspaceFolders } = workspace;
+
+	if (!workspaceFolders) {
+		return [];
+	}
+
+	const folders = [];
+	for (const folder of workspaceFolders) {
+		const folderPath = folder.uri.fsPath;
+		if (apps) {
+			const filePath = path.join(folderPath, 'tiapp.xml');
+			if (await pathExists(filePath)) {
+				folders.push({ folder, type: 'app' as ProjectType });
+			}
+		}
+
+		if (modules) {
+			const androidPath = path.join(folderPath, 'android', 'timodule.xml');
+			const iosPath = path.join(folderPath, 'ios', 'timodule.xml');
+			const iphonePath = path.join(folderPath, 'iphone', 'timodule.xml');
+
+			if (await pathExists(androidPath) || await pathExists(iosPath) || await pathExists(iphonePath)) {
+				folders.push({ folder, type: 'module' as ProjectType });
+			}
+		}
+	}
+
+	return folders;
+}
+
+interface WorkspaceFolderPromptOptions {
+	apps?: boolean;
+	modules?: boolean;
+	placeHolder?: string;
+}
+
+interface FolderDetails {
+	folder: WorkspaceFolder;
+	type: ProjectType;
+}
+
+/**
+ * Prompts the users to select a workspace folder. Intended to be used to have the user select
+ * which folder to perform an action in when multiple Titanium projects are in the workspace
+ *
+ * @export
+ * @param {Object} [options] - Options to control the types of projects to detect
+ * @param {Object} [options.apps=true] - Detect Titanium app projects
+ * @param {Object} [options.modules=false] - Detect Titanium module projects
+ * @returns {Promise<WorkspaceFolder>}
+ */
+export async function promptForWorkspaceFolder ({ apps = true, modules = false, placeHolder = 'Please select a folder to perform action within' }: WorkspaceFolderPromptOptions = {}): Promise<FolderDetails> {
+	const folders = await getValidWorkspaceFolders({ apps, modules });
+	if (!folders.length) {
+		throw new Error('No workspace folders are present');
+	}
+	const choices: CustomQuickPick[] = folders.map(({ folder }) => ({ label: folder.name, id: folder.uri.fsPath  }));
+
+	const choice = await quickPick(choices, { canPickMany: false, placeHolder });
+
+	const folder = folders.find(({ folder }) => folder.uri.fsPath === choice.id);
+	if (!folder) {
+		// should not happen unless removed between prompt and pick?
+		throw new Error(`Could not find ${choice.id}. Has it been removed?`);
+	}
+	return folder;
 }

@@ -1,12 +1,13 @@
 import { TreeItemCollapsibleState } from 'vscode';
 import { BaseNode } from './baseNode';
 import { DeviceNode } from './deviceNode';
+import { DistributeNode } from './distributeNode';
 import { OSVerNode } from './osVerNode';
 
 import appc from '../../appc';
 import { Platform } from '../../types/common';
 import { targetForName } from '../../utils';
-import { DevelopmentTarget } from '../../types/cli';
+import { DevelopmentTarget, PrettyDevelopmentTarget } from '../../types/cli';
 import { BlankNode } from '../nodes';
 import { ExtensionContainer } from '../../container';
 import { GlobalState } from '../../constants';
@@ -15,17 +16,17 @@ export class TargetNode extends BaseNode {
 
 	public readonly collapsibleState = TreeItemCollapsibleState.Collapsed;
 	public readonly contextValue: string = 'TargetNode';
-	public readonly targetId: DevelopmentTarget;
+	public override readonly targetId: DevelopmentTarget;
 
 	constructor (
-		public readonly label: string,
+		public override readonly label: PrettyDevelopmentTarget,
 		public readonly platform: Platform
 	) {
 		super(label);
 		this.targetId = targetForName(this.label) as DevelopmentTarget;
 	}
 
-	public getChildren (): Array<OSVerNode|DeviceNode|BlankNode> {
+	public override getChildren (): Array<OSVerNode|DeviceNode|BlankNode> {
 		const devices = [];
 
 		// Check if we're refreshing the environment information currently and return early so that
@@ -51,6 +52,10 @@ export class TargetNode extends BaseNode {
 						devices.push(new DeviceNode(label, this.platform, this.label, device.udid, this.targetId));
 					}
 					break;
+				case 'Package' as PrettyDevelopmentTarget:
+					devices.push(new DistributeNode('Adhoc', this.platform, this.label, 'dist-adhoc'));
+					devices.push(new DistributeNode('App Store', this.platform, this.label, 'dist-appstore'));
+					break;
 			}
 		} else if (this.platform === 'android') {
 			switch (this.label) {
@@ -69,6 +74,9 @@ export class TargetNode extends BaseNode {
 							devices.push(new DeviceNode(label, this.platform, this.label, emulator.id, this.targetId));
 						}
 					}
+					break;
+				case 'Package' as PrettyDevelopmentTarget:
+					devices.push(new DistributeNode('Play Store', this.platform, this.label, 'dist-playstore'));
 					break;
 			}
 		}

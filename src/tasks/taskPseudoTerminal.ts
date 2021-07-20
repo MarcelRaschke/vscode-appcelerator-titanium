@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import { CommandTaskProvider, TitaniumTaskBase, TitaniumTaskDefinitionBase } from './commandTaskProvider';
-import { TaskExecutionContext, runningTasks } from './tasksHelper';
+import { TaskExecutionContext } from './tasksHelper';
 import * as cp from 'child_process';
 import { ExtensionContainer } from '../container';
 import { GlobalState } from '../constants';
+import { CommandError } from '../common/utils';
+import { Command } from './commandBuilder';
 
 type StdListeners = (content: string) => void;
 
@@ -13,34 +15,25 @@ export enum EscapeCodes {
 	Yellow = '33m'
 }
 
-export class CommandError extends Error {
-	public code = 'E_COMMAND_ERROR';
-	public command: string;
-	public exitCode: number;
-	public signal: string;
-
-	constructor(message: string, command: string, exitCode: number, signal: string) {
-		super(message);
-		this.command = command;
-		this.exitCode = exitCode;
-		this.signal = signal;
-	}
-}
-
-async function spawnCommand (command: string, options: cp.SpawnOptions, onStdout: StdListeners, onStderr: StdListeners, token?: vscode.CancellationToken): Promise<void> {
+async function spawnCommand (command: string, args: string[], options: cp.SpawnOptions, onStdout: StdListeners, onStderr: StdListeners, token?: vscode.CancellationToken): Promise<void> {
 	return new Promise((resolve, reject) => {
 		let cancellationListener: vscode.Disposable;
 		options = options || {};
 		options.shell = true;
 
-		const process = cp.spawn(command, [], options);
+		let output = '';
+		const process = cp.spawn(command, args, options);
 
 		process.stdout?.on('data', (data: Buffer) => {
-			onStdout(data.toString());
+			const out = data.toString();
+			onStdout(out);
+			output += out;
 		});
 
 		process.stderr?.on('data', (data: Buffer) => {
-			onStderr(data.toString());
+			const out = data.toString();
+			onStderr(out);
+			output += out;
 		});
 
 		process.on('close', (code, signal) => {
@@ -52,7 +45,7 @@ async function spawnCommand (command: string, options: cp.SpawnOptions, onStdout
 				return reject(new Error('user cancelled'));
 			} else if (code) {
 				// throw nice error
-				const error = new CommandError(`Process exited with ${code}`, command, code, signal);
+				const error = new CommandError(`Process exited with ${code}`, command, code, output, signal);
 
 				return reject(error);
 			}
@@ -85,8 +78,11 @@ export class TaskPseudoTerminal implements vscode.Pseudoterminal {
 	}
 
 	public open (): void {
+		// When open is called for a task that is started via the build explorer we need to resolve
+		// the workspace folder based on the project dir, when called for a task defined in tasks.json
+		// it is already resolved on task.scope
 		const folder = this.task.scope === vscode.TaskScope.Workspace
-			? vscode.workspace.workspaceFolders![0]
+			? this.getProject(this.task.definition.titaniumBuild.projectDir)
 			: this.task.scope as vscode.WorkspaceFolder;
 
 		const executionContext: TaskExecutionContext = {
@@ -108,22 +104,29 @@ export class TaskPseudoTerminal implements vscode.Pseudoterminal {
 	}
 
 	public close (code?: number): void {
+		if (this.cts.token.isCancellationRequested) {
+			return;
+		}
 		this.cts.cancel();
 		this.closeEmitter.fire(code || 0);
 		ExtensionContainer.context.globalState.update(GlobalState.Running, false);
 		vscode.commands.executeCommand('setContext', GlobalState.Running, false);
-		if (runningTasks.has(this.task.name)) {
-			runningTasks.delete(this.task.name);
+		if (ExtensionContainer.runningTasks.has(this.task.name)) {
+			ExtensionContainer.runningTasks.delete(this.task.name);
 		}
 	}
 
-	public async executeCommand (command: string, folder: vscode.WorkspaceFolder, token?: vscode.CancellationToken): Promise<void> {
+	public async executeCommand (commandInfo: Command, folder: vscode.WorkspaceFolder, token?: vscode.CancellationToken): Promise<void> {
 
-		this.write(`${command} \r\n\r\n`);
+		const { args, command, environment }  = commandInfo;
+		const env = Object.assign(process.env, environment, { FORCE_COLOR: 1 });
+
+		this.write(`${command} ${args.join(' ')} \r\n\r\n`);
 
 		await spawnCommand(
 			command,
-			{ cwd: folder.uri.fsPath, env: { ...process.env, FORCE_COLOR: '1' } },
+			args,
+			{ cwd: folder.uri.fsPath, shell: true,  env },
 			(stdout: string) => {
 				this.write(stdout);
 			},
@@ -156,5 +159,13 @@ export class TaskPseudoTerminal implements vscode.Pseudoterminal {
 		if (data === String.fromCharCode(3)) {
 			this.close();
 		}
+	}
+
+	private getProject (projectDir: string): vscode.WorkspaceFolder {
+		const workspaceFolder = vscode.workspace.workspaceFolders?.find(folder => folder.uri.fsPath === projectDir);
+		if (!workspaceFolder) {
+			throw new Error(`Unable to resolve workspace folder for ${projectDir}`);
+		}
+		return workspaceFolder;
 	}
 }

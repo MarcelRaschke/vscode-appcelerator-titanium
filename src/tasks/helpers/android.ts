@@ -1,11 +1,12 @@
-import { TaskExecutionContext, runningTasks } from '../tasksHelper';
+import { TaskExecutionContext } from '../tasksHelper';
 import { TaskHelper } from './base';
-import { CommandBuilder } from '../commandBuilder';
+import { Command } from '../commandBuilder';
 import { enterAndroidKeystoreInfo } from '../../quickpicks/build/android';
 import { KeystoreInfo } from '../../types/common';
 import { AppBuildTaskTitaniumBuildBase, BuildTaskDefinitionBase, BuildTaskTitaniumBuildBase } from '../buildTaskProvider';
 import { AppPackageTaskTitaniumBuildBase, PackageTaskDefinitionBase, PackageTaskTitaniumBuildBase } from '../packageTaskProvider';
 import { WorkspaceState } from '../../constants';
+import { ExtensionContainer } from '../../container';
 
 export interface AndroidBuildTaskDefinition extends BuildTaskDefinitionBase {
 	titaniumBuild: AndroidBuildTaskTitaniumBuildBase;
@@ -29,23 +30,27 @@ export interface AndroidPackageTaskTitaniumBuildBase extends AppPackageTaskTitan
 
 export class AndroidHelper extends TaskHelper {
 
-	public async resolveAppBuildCommandLine (context: TaskExecutionContext, definition: AndroidBuildTaskTitaniumBuildBase): Promise<string> {
-		const builder = CommandBuilder.create('appc', 'run');
+	public async resolveAppBuildCommandLine (context: TaskExecutionContext, definition: AndroidBuildTaskTitaniumBuildBase): Promise<Command> {
+		const builder = this.createBuilder();
 
 		await this.resolveCommonAppOptions(context, definition, builder);
 
-		if (definition.debugPort || definition.debug) {
-			builder.addOption('--debug-host', `/localhost:${definition.debugPort || '9000'}`);
+		if (definition.debug) {
+			const port = definition.debugPort || ExtensionContainer.debugPorts.get(definition.projectDir);
+			if (!port) {
+				throw new Error(`Failed to find debug port associated with ${definition.projectDir}. Please try setting a "port" property in the configuration.`);
+			}
+			builder.addOption('--debug-host', `/localhost:${port}`);
 		}
 
 		this.storeLastState(WorkspaceState.LastBuildState, definition);
-		runningTasks.set(context.label, { buildOptions: definition });
+		ExtensionContainer.runningTasks.set(context.label, { buildOptions: definition });
 
 		return builder.resolve();
 	}
 
-	public async resolveAppPackageCommandLine(context: TaskExecutionContext, definition: AndroidPackageTaskTitaniumBuildBase): Promise<string> {
-		const builder = CommandBuilder.create('appc', 'run');
+	public async resolveAppPackageCommandLine(context: TaskExecutionContext, definition: AndroidPackageTaskTitaniumBuildBase): Promise<Command> {
+		const builder = this.createBuilder();
 
 		await this.resolveCommonPackagingOptions(context, definition, builder);
 
@@ -57,11 +62,11 @@ export class AndroidHelper extends TaskHelper {
 
 		builder
 			.addQuotedOption('--keystore', androidInfo.keystore.location)
-			.addOption('--alias', androidInfo.keystore.alias)
-			.addQuotedOption('--store-password', androidInfo.keystore.password);
+			.addQuotedOption('--alias', androidInfo.keystore.alias)
+			.addEnvironmentArgument('--store-password', androidInfo.keystore.password);
 
 		if (androidInfo.keystore.privateKeyPassword) {
-			builder.addQuotedOption('--key-password', androidInfo.keystore.privateKeyPassword);
+			builder.addEnvironmentArgument('--key-password', androidInfo.keystore.privateKeyPassword);
 		}
 
 		definition.android = androidInfo;
@@ -71,16 +76,16 @@ export class AndroidHelper extends TaskHelper {
 		return builder.resolve();
 	}
 
-	public async resolveModuleBuildCommandLine (context: TaskExecutionContext, definition: BuildTaskTitaniumBuildBase): Promise<string> {
-		const builder = CommandBuilder.create('appc', 'run');
+	public async resolveModuleBuildCommandLine (context: TaskExecutionContext, definition: BuildTaskTitaniumBuildBase): Promise<Command> {
+		const builder = this.createBuilder();
 
 		this.resolveCommonOptions(context, definition, builder);
 
 		return builder.resolve();
 	}
 
-	public async resolveModulePackageCommandLine (context: TaskExecutionContext, definition: PackageTaskTitaniumBuildBase): Promise<string> {
-		const builder = CommandBuilder.create('appc', 'run');
+	public async resolveModulePackageCommandLine (context: TaskExecutionContext, definition: PackageTaskTitaniumBuildBase): Promise<Command> {
+		const builder = this.createBuilder();
 
 		this.resolveCommonOptions(context, definition, builder);
 

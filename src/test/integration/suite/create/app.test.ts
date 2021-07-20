@@ -5,14 +5,18 @@ import * as fs from 'fs-extra';
 import * as tmp from 'tmp';
 import * as xml2js from 'xml2js';
 import { parsePlatformsFromTiapp, dismissNotifications } from '../../util/common';
-import { ProjectCreator } from '../../util/create';
+import { Project } from '../../util/project';
 
-(process.env.JENKINS ? describe.skip : describe)('Application creation', function () {
+describe('Application creation', function () {
+	this.timeout(30000);
+
 	let browser: VSBrowser;
 	let driver: WebDriver;
 	let tempDirectory: tmp.DirResult;
+	let creator: Project;
 
-	beforeEach(async function () {
+	before(async function () {
+		this.timeout(180000);
 		browser = VSBrowser.instance;
 		driver = browser.driver;
 		const editorView = new EditorView();
@@ -20,20 +24,23 @@ import { ProjectCreator } from '../../util/create';
 		await browser.waitForWorkbench();
 		tempDirectory = tmp.dirSync();
 		await dismissNotifications();
+		creator = new Project(driver);
+		await creator.reset();
+		await creator.waitForGetStarted();
 	});
 
 	afterEach(async function () {
-		await fs.remove(tempDirectory.name);
+		if (tempDirectory) {
+			await fs.remove(tempDirectory.name);
+		}
 	});
 
 	it('should be able to create a project', async function () {
 		this.timeout(90000);
 		const name = 'vscode-e2e-test-app';
-		const creator = new ProjectCreator(driver);
 
 		await creator.createApp({
 			id: 'com.axway.e2e',
-			enableServices: false,
 			folder: tempDirectory.name,
 			name,
 			platforms: [ 'android', 'ios' ]
@@ -53,10 +60,9 @@ import { ProjectCreator } from '../../util/create';
 	it('should only enable selected platforms', async function () {
 		this.timeout(90000);
 		const name = 'vscode-e2e-test-app';
-		const creator = new ProjectCreator(driver);
+
 		await creator.createApp({
 			id: 'com.axway.e2e',
-			enableServices: false,
 			folder: tempDirectory.name,
 			name,
 			platforms: [ 'android' ]

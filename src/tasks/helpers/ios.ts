@@ -1,15 +1,15 @@
-import { TaskExecutionContext, runningTasks } from '../tasksHelper';
+import { TaskExecutionContext } from '../tasksHelper';
 import { selectiOSCertificate, selectiOSProvisioningProfile } from '../../quickpicks/build/ios';
 import { getCorrectCertificateName } from '../../utils';
-import project from '../../project';
-import { IosCertificateType, IosCert } from '../../types/common';
+import { IosCert } from '../../types/common';
 import { TaskHelper } from './base';
-import { CommandBuilder } from '../commandBuilder';
+import { Command } from '../commandBuilder';
 import { BuildTaskDefinitionBase, AppBuildTaskTitaniumBuildBase, BuildTaskTitaniumBuildBase } from '../buildTaskProvider';
 import { AppPackageTaskTitaniumBuildBase, PackageTaskDefinitionBase, PackageTaskTitaniumBuildBase } from '../packageTaskProvider';
 import { WorkspaceState } from '../../constants';
 
 import appc from '../../appc';
+import { ExtensionContainer } from '../../container';
 
 export interface IosTitaniumBuildDefinition extends BuildTaskDefinitionBase {
 	titaniumBuild: IosBuildTaskTitaniumBuildBase;
@@ -39,8 +39,9 @@ export interface IosPackageTaskTitaniumBuildBase extends AppPackageTaskTitaniumB
 }
 export class IosHelper extends TaskHelper {
 
-	public async resolveAppBuildCommandLine (context: TaskExecutionContext, definition: IosBuildTaskTitaniumBuildBase): Promise<string> {
-		const builder = CommandBuilder.create('appc', 'run');
+	public async resolveAppBuildCommandLine (context: TaskExecutionContext, definition: IosBuildTaskTitaniumBuildBase): Promise<Command> {
+		const builder = this.createBuilder();
+		const project = this.getProject(definition.projectDir);
 
 		await this.resolveCommonAppOptions(context, definition, builder);
 
@@ -49,8 +50,7 @@ export class IosHelper extends TaskHelper {
 			let certificate: IosCert|undefined;
 
 			if (!iosInfo.certificate) {
-				iosInfo.certificate = (await selectiOSCertificate('run')).id;
-				certificate = appc.iOSCertificates().find(cert => cert.fullname === iosInfo.certificate);
+				certificate = await selectiOSCertificate('run');
 			} else {
 				certificate = appc.iOSCertificates().find(cert => cert.fullname === iosInfo.certificate);
 			}
@@ -59,10 +59,10 @@ export class IosHelper extends TaskHelper {
 				throw new Error(`Unable to find certificate ${iosInfo.certificate}`);
 			}
 
-			iosInfo.certificate =  getCorrectCertificateName(certificate.fullname, project.sdk()[0], IosCertificateType.developer);
+			iosInfo.certificate =  getCorrectCertificateName(certificate.fullname, project.sdk()[0], 'developer');
 
 			if (!iosInfo.provisioningProfile) {
-				iosInfo.provisioningProfile = (await selectiOSProvisioningProfile(certificate, 'run', project.appId())).uuid;
+				iosInfo.provisioningProfile = (await selectiOSProvisioningProfile(certificate, definition.target, project.appId())).uuid;
 			}
 
 			if (!iosInfo.provisioningProfile) {
@@ -77,13 +77,14 @@ export class IosHelper extends TaskHelper {
 		}
 
 		this.storeLastState(WorkspaceState.LastBuildState, definition);
-		runningTasks.set(context.label, { buildOptions: definition });
+		ExtensionContainer.runningTasks.set(context.label, { buildOptions: definition });
 
 		return builder.resolve();
 	}
 
-	public async resolveAppPackageCommandLine(context: TaskExecutionContext, definition: IosPackageTaskTitaniumBuildBase): Promise<string> {
-		const builder = CommandBuilder.create('appc', 'run');
+	public async resolveAppPackageCommandLine(context: TaskExecutionContext, definition: IosPackageTaskTitaniumBuildBase): Promise<Command> {
+		const builder = this.createBuilder();
+		const project = this.getProject(definition.projectDir);
 
 		await this.resolveCommonPackagingOptions(context, definition, builder);
 
@@ -91,20 +92,19 @@ export class IosHelper extends TaskHelper {
 		let certificate: IosCert|undefined;
 
 		if (!iosInfo.certificate) {
-			iosInfo.certificate = (await selectiOSCertificate('distribute')).id;
-			certificate = appc.iOSCertificates(IosCertificateType.distribution).find(cert => cert.fullname === iosInfo.certificate);
+			certificate = await selectiOSCertificate('distribute');
 		} else {
-			certificate = appc.iOSCertificates(IosCertificateType.distribution).find(cert => cert.fullname === iosInfo.certificate);
+			certificate = appc.iOSCertificates('distribution').find(cert => cert.fullname === iosInfo.certificate);
 		}
 
 		if (!certificate) {
 			throw new Error(`Unable to find certificate ${iosInfo.certificate}`);
 		}
 
-		iosInfo.certificate =  getCorrectCertificateName(certificate.fullname, project.sdk()[0], IosCertificateType.distribution);
+		iosInfo.certificate =  getCorrectCertificateName(certificate.fullname, project.sdk()[0], 'distribution');
 
 		if (!iosInfo.provisioningProfile) {
-			iosInfo.provisioningProfile = (await selectiOSProvisioningProfile(certificate, definition.target, project.appId())).id;
+			iosInfo.provisioningProfile = (await selectiOSProvisioningProfile(certificate, definition.target, project.appId())).uuid;
 		}
 
 		if (!iosInfo.provisioningProfile) {
@@ -121,16 +121,16 @@ export class IosHelper extends TaskHelper {
 		return builder.resolve();
 	}
 
-	public async resolveModuleBuildCommandLine (context: TaskExecutionContext, definition: BuildTaskTitaniumBuildBase): Promise<string> {
-		const builder = CommandBuilder.create('appc', 'run');
+	public async resolveModuleBuildCommandLine (context: TaskExecutionContext, definition: BuildTaskTitaniumBuildBase): Promise<Command> {
+		const builder = this.createBuilder();
 
 		this.resolveCommonOptions(context, definition, builder);
 
 		return builder.resolve();
 	}
 
-	public async resolveModulePackageCommandLine (context: TaskExecutionContext, definition: PackageTaskTitaniumBuildBase): Promise<string> {
-		const builder = CommandBuilder.create('appc', 'run');
+	public async resolveModulePackageCommandLine (context: TaskExecutionContext, definition: PackageTaskTitaniumBuildBase): Promise<Command> {
+		const builder = this.createBuilder();
 
 		this.resolveCommonOptions(context, definition, builder);
 

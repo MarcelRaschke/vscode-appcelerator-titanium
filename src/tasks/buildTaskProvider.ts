@@ -2,10 +2,13 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { CommandTaskProvider, TitaniumTaskBase, TitaniumTaskDefinitionBase, TitaniumBuildBase } from './commandTaskProvider';
 import { selectBuildTarget } from '../quickpicks/build/common';
-import { TaskExecutionContext, Platform, debugSessionInformation, DEBUG_SESSION_VALUE } from './tasksHelper';
+import { TaskExecutionContext, debugSessionInformation, DEBUG_SESSION_VALUE } from './tasksHelper';
 import { Helpers } from './helpers/';
 import { platforms } from '../utils';
 import { TaskPseudoTerminal } from './taskPseudoTerminal';
+import { Platform } from '../types/common';
+import { Command } from './commandBuilder';
+import { getValidWorkspaceFolders, promptForWorkspaceFolder } from '../quickpicks';
 
 export interface BuildTask extends TitaniumTaskBase {
 	definition: BuildTaskDefinitionBase;
@@ -48,36 +51,36 @@ export class BuildTaskProvider extends CommandTaskProvider {
 		super('titanium-build', helpers);
 	}
 
-	public provideTasks(): vscode.Task[] {
+	public override async provideTasks(): Promise<vscode.Task[]> {
 		const tasks: vscode.Task[] = [];
 
 		for (const platform of platforms()) {
-			const name = `Debug ${platform}`;
-			const definition: BuildTaskDefinitionBase = {
-				type: 'titanium-build',
-				titaniumBuild: {
-					platform: platform as Platform,
-					projectType: 'app',
-					projectDir: vscode.workspace.rootPath!,
-					liveview: false,
-					debugPort: 9000
-				},
-				label: name,
-				name,
-				isBackground: true
-			};
+			for (const { folder } of await getValidWorkspaceFolders()) {
+				const name = `Debug ${platform}`;
+				const definition: BuildTaskDefinitionBase = {
+					type: 'titanium-build',
+					titaniumBuild: {
+						platform: platform as Platform,
+						projectType: 'app',
+						projectDir: folder.uri.fsPath,
+						liveview: false
+					},
+					label: name,
+					name,
+					isBackground: true
+				};
 
-			tasks.push(this.createTask(
-				name,
-				vscode.TaskScope.Workspace,
-				definition
-			));
+				tasks.push(this.createTask(
+					name,
+					vscode.TaskScope.Workspace,
+					definition
+				));
+			}
 		}
-
 		return tasks;
 	}
 
-	public async resolveTask (task: TitaniumTaskBase): Promise<vscode.Task> {
+	public override async resolveTask (task: TitaniumTaskBase): Promise<vscode.Task> {
 		// Run through create task
 		return this.createTask(
 			task.name,
@@ -86,11 +89,19 @@ export class BuildTaskProvider extends CommandTaskProvider {
 		);
 	}
 
-	public async resolveTaskInformation (context: TaskExecutionContext, task: BuildTask): Promise<string> {
+	public async resolveTaskInformation (context: TaskExecutionContext, task: BuildTask): Promise<Command> {
 		const { definition } = task;
 
 		if (!definition.titaniumBuild.projectDir) {
-			definition.titaniumBuild.projectDir = vscode.workspace.rootPath!;
+			const folderDetectOptions = { apps: true, modules: true };
+
+			if (definition.titaniumBuild.projectType === 'app') {
+				folderDetectOptions.modules = false;
+			} else if (definition.titaniumBuild.projectType === 'module') {
+				folderDetectOptions.apps = false;
+			}
+			const { folder } = await promptForWorkspaceFolder(folderDetectOptions);
+			definition.titaniumBuild.projectDir = folder.uri.fsPath;
 		}
 
 		const helper = this.getHelper(definition.titaniumBuild.platform);

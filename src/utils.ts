@@ -1,14 +1,15 @@
 import * as fs from 'fs-extra';
-import * as walkSync from 'klaw-sync';
 import * as path from 'path';
 import * as semver from 'semver';
-import * as _ from 'underscore';
 import appc from './appc';
+import findUp from 'find-up';
+import walkSync from 'klaw-sync';
 
 import { platform } from 'os';
-import { workspace, tasks, Task, ShellExecution } from 'vscode';
-import { CleanAppOptions, CreateAppOptions, CreateModuleOptions, Target } from './types/cli';
-import { IosCert, IosCertificateType, PlatformPretty } from './types/common';
+import { tasks, Task, ShellExecution, TaskScope } from 'vscode';
+import { CreateAppOptions, CreateModuleOptions, PrettyDevelopmentTarget, PrettyTarget, Target } from './types/cli';
+import { IosCert, IosCertificateType, Platform, PlatformPretty } from './types/common';
+import { ExtensionContainer } from './container';
 
 /**
  * Returns normalised name for platform
@@ -16,11 +17,11 @@ import { IosCert, IosCertificateType, PlatformPretty } from './types/common';
  * @param {String} targetPlatform - Target platform.
  * @returns {String}
  */
-export function  normalisedPlatform (targetPlatform: string): string {
+export function  normalisedPlatform (targetPlatform: Platform | 'iphone' | 'ipad'): Lowercase<Platform> {
 	if (targetPlatform === 'iphone' || targetPlatform === 'ipad') {
 		return 'ios';
 	}
-	return targetPlatform.toLowerCase();
+	return targetPlatform.toLowerCase() as Lowercase<Platform>;
 }
 
 /**
@@ -38,7 +39,7 @@ export function  capitalizeFirstLetter (s: string): string {
  *
  * @returns {Array}
  */
-export function platforms (): string[] {
+export function platforms (): Platform[] {
 	switch (platform()) {
 		case 'darwin':
 			return [ 'ios', 'android' ];
@@ -57,13 +58,13 @@ export function platforms (): string[] {
  * @param {String} targetPlatform - target platform.
  * @returns {String}
  */
-export function nameForPlatform (targetPlatform: string): PlatformPretty {
+export function nameForPlatform (targetPlatform: Platform): PlatformPretty {
 	targetPlatform =  normalisedPlatform(targetPlatform);
 	switch (targetPlatform) {
 		case 'android':
-			return PlatformPretty.android;
+			return 'Android';
 		case 'ios':
-			return PlatformPretty.ios;
+			return 'iOS';
 		default:
 			throw new Error(`Unknown platform ${targetPlatform}`);
 	}
@@ -74,13 +75,13 @@ export function nameForPlatform (targetPlatform: string): PlatformPretty {
  * @param {String} target - target to get pretty name for.
  * @returns {String}
  */
-export function nameForTarget (target: string): string {
-	target = target.toLowerCase();
-	switch (target) {
+export function nameForTarget (target: Target): PrettyTarget {
+	const lowerCaseTarget: Lowercase<Target> = target.toLowerCase() as Lowercase<Target>;
+	switch (lowerCaseTarget) {
 		case 'device':
 		case 'emulator':
 		case 'simulator':
-			return capitalizeFirstLetter(target);
+			return capitalizeFirstLetter(target) as PrettyDevelopmentTarget;
 		case 'dist-adhoc':
 			return 'Ad-Hoc';
 		case 'dist-appstore':
@@ -88,7 +89,7 @@ export function nameForTarget (target: string): string {
 		case 'dist-playstore':
 			return 'Play Store';
 		default:
-			return target;
+			throw new Error(`Unknown target ${target}`);
 	}
 }
 
@@ -98,26 +99,26 @@ export function nameForTarget (target: string): string {
  * @param {String} targetPlatform - platform to get target for.
  * @returns {String}
  */
-export function targetForName (name: string): Target {
-	name = name.toLowerCase();
-	switch (name) {
-		case 'Ad-Hoc':
+export function targetForName (name: PrettyTarget): Target {
+	const lowerCaseName: Lowercase<PrettyTarget> = name.toLowerCase() as Lowercase<PrettyTarget>;
+	switch (lowerCaseName) {
+		case 'ad-hoc':
 			return 'dist-adhoc';
-		case 'App Store':
+		case 'app store':
 			return 'dist-appstore';
-		case 'Play Store':
+		case 'play store':
 			return 'dist-playstore';
 		case 'device':
 		case 'emulator':
 		case 'simulator':
 		default:
-			return name as Target;
+			return lowerCaseName as Target;
 	}
 }
 
-export function targetsForPlatform (platformName: string): string[] {
-	platformName = normalisedPlatform(platformName);
-	switch (platformName) {
+export function targetsForPlatform (platformName: Platform): Target[] {
+	const lowerCasePlatform = normalisedPlatform(platformName);
+	switch (lowerCasePlatform) {
 		case 'android':
 			return [ 'emulator', 'device', 'dist-playstore' ];
 		case 'ios':
@@ -158,67 +159,6 @@ export function iOSProvisioningProfileMatchesAppId (profileAppId: string, appId:
 }
 
 /**
- * Alloy app directory
- *
- * @returns {String}
- */
-export function getAlloyRootPath (): string {
-	return path.join(workspace.rootPath!, 'app');
-}
-
-/**
- * Returns true if directory exists at given path
- *
- * @param {String} directoryPath 	directory path
- * @returns {Boolean}
- */
-export function directoryExists (directoryPath: string): boolean {
-	try {
-		const stat = fs.statSync(directoryPath);
-		return stat.isDirectory();
-	} catch (err) {
-		return !(err && err.code === 'ENOENT');
-	}
-}
-
-/**
- * Returns true if current project is an Alloy project
- *
- * @returns {Boolean}
- */
-export function isAlloyProject (): boolean {
-	return directoryExists(getAlloyRootPath());
-}
-
-/**
- * i18n project directory
- *
- * @returns {String}
- */
-export function getI18nPath (): string {
-	if (isAlloyProject()) {
-		return path.join(getAlloyRootPath(), 'i18n');
-	} else {
-		return path.join(workspace.rootPath!, 'i18n');
-	}
-}
-
-/**
- * Returns true if file exists at given path
- *
- * @param {String} filePath		file path
- * @returns {Boolean}
- */
-export function fileExists (filePath: string): boolean {
-	try {
-		const stat = fs.statSync(filePath);
-		return stat.isFile();
-	} catch (err) {
-		return !(err && err.code === 'ENOENT');
-	}
-}
-
-/**
  * Convert to unix path
  *
  * @param {String} p 	path
@@ -240,14 +180,16 @@ export function toUnixPath (p: string): string { // https://github.com/anodynos/
  * @returns {Array}
  */
 export function getAllKeys (obj: Record<string, unknown>): string[] {
-	if (!_.isObject(obj)) {
+	if (typeof obj !== 'object') {
 		return [];
 	}
 	const result = [];
 	for (const [ key, value ] of Object.entries(obj)) {
 		result.push(key);
-		for (const val of getAllKeys(value)) {
-			result.push(key + '.' + val);
+		if (typeof value === 'object' && value !== null) {
+			for (const val of getAllKeys(value as Record<string, unknown>)) {
+				result.push(key + '.' + val);
+			}
 		}
 	}
 	return result;
@@ -267,7 +209,7 @@ export function filterJSFiles (directory: string): readonly walkSync.Item[] {
 	});
 }
 
-function normalizeDriveLetter (filePath: string): string {
+export function normalizeDriveLetter (filePath: string): string {
 	if (process.platform !== 'win32') {
 		return filePath;
 	}
@@ -275,44 +217,58 @@ function normalizeDriveLetter (filePath: string): string {
 	return `${root.substr(0, 1).toUpperCase()}${filePath.slice(1)}`;
 }
 
-function quoteArgument (arg: string): string {
+export function quoteArgument (arg: string): string {
 	return `"${arg}"`;
 }
 
 export function createAppArguments (options: CreateAppOptions): string[] {
+	const subcommand = ExtensionContainer.isUsingTi() ? 'create' : 'new';
 	const args = [
-		'new',
-		'--type', 'titanium',
+		subcommand,
+		'--type', 'app',
 		'--name', options.name,
 		'--id', options.id,
-		'--project-dir', normalizeDriveLetter(path.join(options.workspaceDir, options.name)),
 		'--platforms', options.platforms.join(','),
 		'--no-prompt',
 		'--log-level', options.logLevel
 	];
+
+	if (ExtensionContainer.isUsingTi()) {
+		args.push('--workspace-dir', normalizeDriveLetter(options.workspaceDir));
+	} else {
+		args.push('--project-dir', normalizeDriveLetter(path.join(options.workspaceDir, options.name)));
+		if (!options.enableServices) {
+			args.push('--no-services');
+		} else {
+			args.push('--no-enable-services');
+		}
+	}
 
 	if (options.force) {
 		args.push('--force');
 	}
-	if (!options.enableServices) {
-		args.push('--no-services');
-	} else {
-		args.push('--no-enable-services');
-	}
+
 	return args.map(arg => quoteArgument(arg));
 }
 
 export function createModuleArguments (options: CreateModuleOptions): string[] {
+	const subcommand = ExtensionContainer.isUsingTi() ? 'create' : 'new';
+	const type = ExtensionContainer.isUsingTi() ? 'module' : 'timodule';
 	const args = [
-		'new',
-		'--type', 'timodule',
+		subcommand,
+		'--type', type,
 		'--name', options.name,
 		'--id', options.id,
-		'--project-dir', normalizeDriveLetter(path.join(options.workspaceDir, options.name)),
 		'--platforms', options.platforms.join(','),
 		'--no-prompt',
 		'--log-level', options.logLevel
 	];
+
+	if (ExtensionContainer.isUsingTi()) {
+		args.push('--workspace-dir', normalizeDriveLetter(options.workspaceDir));
+	} else {
+		args.push('--project-dir', normalizeDriveLetter(path.join(options.workspaceDir, options.name)));
+	}
 
 	if (options.codeBases?.android) {
 		args.push('--android-code-base', options.codeBases.android);
@@ -325,17 +281,6 @@ export function createModuleArguments (options: CreateModuleOptions): string[] {
 	if (options.force) {
 		args.push('--force');
 	}
-	return args.map(arg => quoteArgument(arg));
-}
-
-export function cleanAppArguments (options: CleanAppOptions): string[] {
-	const args = [
-		'ti',
-		'clean',
-		'--project-dir', normalizeDriveLetter(options.projectDir),
-		'--log-level', options.logLevel
-	];
-
 	return args.map(arg => quoteArgument(arg));
 }
 
@@ -356,11 +301,8 @@ export function validateAppId (appId: string): boolean {
  * @returns {Boolean}
  */
 export function matches (text: string, test: string): boolean {
+	// eslint-disable-next-line security/detect-non-literal-regexp
 	return new RegExp(test, 'i').test(text);
-}
-
-export function isValidPlatform (targetPlatform: string): boolean {
-	return fs.pathExistsSync(path.join(workspace.rootPath!, targetPlatform));
 }
 
 /**
@@ -382,21 +324,38 @@ export function getCorrectCertificateName (certificateName: string, sdkVersion: 
 		throw new Error(`Failed to lookup certificate ${certificateName}`);
 	}
 
-	if (semver.gte(semver.coerce(sdkVersion)!, '8.2.0')) {
+	const coerced = semver.coerce(sdkVersion);
+
+	// If we cant coerce the SDK version just assume it's newer than 8.2.0 because lets be honest,
+	// it almost certainly is
+	if (!coerced || semver.gte(coerced, '8.2.0')) {
 		return certificate.fullname;
 	} else {
 		return certificate.name;
 	}
 }
 
-export async function getNodeSupportedVersion(sdkVersion: string): Promise<string|undefined> {
+export async function getNodeSupportedVersion(): Promise<string|undefined> {
+	// TODO: we'll just take the first app project for now and use that as the supported range,
+	// this should potentially be improved in future to collate the various supported ranges,
+	// but that's a much more invasive change
+	let sdkVersion;
+	for (const proj of ExtensionContainer.projects.values()) {
+		if (proj.type !== 'app') {
+			continue;
+		}
+		sdkVersion = proj.sdk()[0];
+	}
+
+	if (!sdkVersion) {
+		return;
+	}
 
 	const sdkInfo = appc.sdkInfo(sdkVersion);
 	if (!sdkInfo) {
 		return;
 	}
 	const sdkPath = sdkInfo.path;
-
 	const packageJSON = path.join(sdkPath, 'package.json');
 	const { vendorDependencies } = await fs.readJSON(packageJSON);
 	return vendorDependencies.node;
@@ -406,6 +365,7 @@ export async function executeAsTask(command: string, name: string): Promise<void
 
 	const task = new Task(
 		{ type: 'shell' },
+		TaskScope.Global,
 		name,
 		'Updates',
 		new ShellExecution(command)
@@ -422,4 +382,61 @@ export async function executeAsTask(command: string, name: string): Promise<void
 		});
 	});
 	return taskEndPromise;
+}
+
+/**
+ * Maps a device ID to the device name reported in ti info output
+ *
+ * @export
+ * @param {string} deviceID - The device ID
+ * @param {Platform} platform - The platform the device belongs to
+ * @param {string} target - The target type the device belongs to
+ * @returns {string}
+ */
+export function getDeviceNameFromId (deviceID: string, platform: Platform, target: string): string {
+	let deviceName: string|undefined;
+	if (platform === 'android' && target === 'device') {
+		deviceName = (appc.androidDevices().find(device => device.id === deviceID))?.name;
+	} else if (platform === 'android' && target === 'emulator') {
+		deviceName = (appc.androidEmulators().AVDs.find(emulator => emulator.id === deviceID))?.name;
+	} else if (platform === 'ios' && target === 'device') {
+		deviceName = (appc.iOSDevices().find(device => device.udid === deviceID))?.name;
+	} else if (platform === 'ios' && target === 'simulator') {
+		for (const simVer of appc.iOSSimulatorVersions()) {
+			deviceName = (appc.iOSSimulators()[simVer].find(simulator => simulator.udid === deviceID))?.name;
+			if (deviceName) {
+				deviceName = `${deviceName} (${simVer})`;
+				break;
+			}
+		}
+	}
+
+	if (!deviceName) {
+		throw new Error(`Unable to find a name for ${deviceID}`);
+	}
+
+	return deviceName;
+}
+
+/*
+ * Given a file path, will walk the file tree until it finds a tiapp.xml, and will return the
+ * parent directory of that tiapp.xml. Useful for helping to work backwards from a file that has
+ * triggered completions to a project.
+ *
+ * @export
+ * @param {string} filePath - The file path to start from
+ * @returns {Promise<string>} The parent directory
+ */
+export async function findProjectDirectory (filePath: string): Promise<string> {
+	try {
+		const tiappFile = await findUp('tiapp.xml', { cwd: filePath, type: 'file' });
+		if (!tiappFile) {
+			throw new Error(`Unable to find project dir for ${filePath}`);
+		}
+
+		return path.dirname(tiappFile);
+	} catch (error) {
+		console.log(error);
+		throw error;
+	}
 }

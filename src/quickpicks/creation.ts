@@ -3,6 +3,8 @@ import Appc from '../appc';
 import { nameForPlatform, platforms } from '../utils';
 import { CustomQuickPick, quickPick } from './common';
 import { appc } from 'titanium-editor-commons/updates';
+import { ExtensionContainer } from '../container';
+import { InteractionError } from '../commands';
 
 export interface CodeBase {
 	android?: 'java' | 'kotlin'
@@ -19,8 +21,13 @@ interface iOSCodeBaseQuickPickItem extends CustomQuickPick {
 
 export async function selectPlatforms (): Promise<string[]> {
 	const choices: CustomQuickPick[] = platforms().map(platform => ({ label: nameForPlatform(platform), id: platform, picked: true }));
-	const selected = await quickPick(choices, { canPickMany: true, placeHolder: 'Choose platforms' });
-	return selected.map((platform: CustomQuickPick)  => platform.id);
+	const selected = await quickPick(choices, { canPickMany: true, placeHolder: 'Choose platforms' }, { forceShow: true });
+
+	if (!selected.length) {
+		throw new InteractionError('At least one platform must be selected');
+	}
+
+	return selected.map((platform: CustomQuickPick) => platform.id);
 }
 
 export async function selectCodeBases(platforms: string[]): Promise<CodeBase|undefined> {
@@ -40,16 +47,18 @@ export async function selectCodeBases(platforms: string[]): Promise<CodeBase|und
 		return undefined;
 	}
 
-	// CLI 8.1.1 did not correctly handle the --ios-code-base option, so only ask for codebase
-	// options if they're using 8.1.1 or above
-	const selectedCLI = await appc.core.checkInstalledVersion();
+	if (!ExtensionContainer.isUsingTi()) {
+		// CLI 8.1.1 did not correctly handle the --ios-code-base option, so only ask for codebase
+		// options if they're using 8.1.1 or above
+		const selectedCLI = await appc.core.checkInstalledVersion();
 
-	if (!selectedCLI) {
-		return;
-	}
+		if (!selectedCLI) {
+			return;
+		}
 
-	if (semver.lt(selectedCLI, '8.1.1')) {
-		return undefined;
+		if (semver.lt(selectedCLI, '8.1.1')) {
+			return undefined;
+		}
 	}
 
 	if (platforms.includes('android')) {

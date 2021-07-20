@@ -1,5 +1,5 @@
 import * as glob from 'glob';
-import * as Mocha from 'mocha';
+import Mocha from 'mocha';
 import * as path from 'path';
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -26,7 +26,7 @@ function setupCoverage () {
 
 export async function run (): Promise<void> {
 	const nyc = process.env.COVERAGE ? setupCoverage() : null;
-
+	const timeout = process.env.DEBUG ? 99999 : undefined;
 	const reportPath = path.join(__dirname, '..', '..', '..', 'junit_report.xml');
 
 	const mocha = new Mocha({
@@ -38,7 +38,8 @@ export async function run (): Promise<void> {
 				junit_report_path: reportPath
 			}
 		},
-		color: true
+		color: true,
+		timeout
 	});
 
 	const testsRoot = path.resolve(__dirname);
@@ -50,7 +51,7 @@ export async function run (): Promise<void> {
 
 	try {
 		// Run the mocha test
-		await new Promise((resolve, reject) => {
+		await new Promise<void>((resolve, reject) => {
 			mocha.run(failures => {
 				if (failures > 0) {
 					return reject(new Error(`${failures} tests failed.`));

@@ -1,5 +1,5 @@
-import { TaskExecutionContext, ProjectType } from '../tasksHelper';
-import { CommandBuilder } from '../commandBuilder';
+import { TaskExecutionContext, isDistributionAppBuild } from '../tasksHelper';
+import { Command, CommandBuilder } from '../commandBuilder';
 import { ExtensionContainer } from '../../container';
 import { quickPick } from '../../quickpicks';
 import * as fs from 'fs-extra';
@@ -9,20 +9,14 @@ import { UserCancellation } from '../../commands/common';
 import { BuildTaskTitaniumBuildBase, AppBuildTaskTitaniumBuildBase } from '../buildTaskProvider';
 import { PackageTaskTitaniumBuildBase, AppPackageTaskTitaniumBuildBase } from '../packageTaskProvider';
 import { TitaniumBuildBase } from '../commandTaskProvider';
-import project from '../../project';
 import { WorkspaceState } from '../../constants';
 import { selectDevice } from '../../quickpicks/build/common';
 import { IosBuildTaskTitaniumBuildBase } from './ios';
+import { Project } from '../../project';
+import { ProjectType } from '../../types/common';
 
-function isDistributionBuild (definition: AppBuildTaskTitaniumBuildBase | AppPackageTaskTitaniumBuildBase): definition is AppPackageTaskTitaniumBuildBase {
-	if (definition.target?.startsWith('dist')) {
-		return true;
-	}
-	return false;
-}
-
-function isAppBuild<T extends PackageTaskTitaniumBuildBase>(definition: PackageTaskTitaniumBuildBase): definition is T {
-	if (definition.projectType) {
+function isAppBuild<T extends TitaniumBuildBase>(definition: TitaniumBuildBase): definition is T {
+	if (definition.projectType === 'app') {
 		return true;
 	}
 	return false;
@@ -39,11 +33,12 @@ function shouldEnableLiveview (definition: AppBuildTaskTitaniumBuildBase): boole
 
 export abstract class TaskHelper {
 
-	public abstract async resolveAppBuildCommandLine (context: TaskExecutionContext, definition: BuildTaskTitaniumBuildBase): Promise<string>
-	public abstract async resolveAppPackageCommandLine (context: TaskExecutionContext, definition: PackageTaskTitaniumBuildBase): Promise<string>
+	public abstract resolveAppBuildCommandLine (context: TaskExecutionContext, definition: BuildTaskTitaniumBuildBase): Promise<Command>
+	public abstract resolveAppPackageCommandLine (context: TaskExecutionContext,
+		definition: PackageTaskTitaniumBuildBase): Promise<Command>
 
-	public abstract async resolveModuleBuildCommandLine (context: TaskExecutionContext, definition: BuildTaskTitaniumBuildBase): Promise<string>
-	public abstract async resolveModulePackageCommandLine (context: TaskExecutionContext, definition: PackageTaskTitaniumBuildBase): Promise<string>
+	public abstract resolveModuleBuildCommandLine (context: TaskExecutionContext, definition: BuildTaskTitaniumBuildBase): Promise<Command>
+	public abstract resolveModulePackageCommandLine (context: TaskExecutionContext, definition: PackageTaskTitaniumBuildBase): Promise<Command>
 
 	public resolveCommonOptions (context: TaskExecutionContext, definition: TitaniumBuildBase, builder: CommandBuilder): void {
 
@@ -72,7 +67,7 @@ export abstract class TaskHelper {
 
 		builder.addOption('--target', definition.target);
 
-		if (!isDistributionBuild(definition)) {
+		if (!isDistributionAppBuild(definition)) {
 
 			if (shouldEnableLiveview(definition)) {
 				builder.addFlag('--liveview');
@@ -95,6 +90,7 @@ export abstract class TaskHelper {
 			builder.addOption('--device-id', definition.deviceId);
 		}
 
+		const project = this.getProject(definition.projectDir);
 		builder.addQuotedOption('--sdk', project.sdk()[0]);
 
 	}
@@ -157,5 +153,25 @@ export abstract class TaskHelper {
 
 	public storeLastState (type: WorkspaceState, buildOptions: TitaniumBuildBase): void {
 		ExtensionContainer.context.workspaceState.update(type, buildOptions);
+		// Only store for app builds for now
+		if (isAppBuild<AppBuildTaskTitaniumBuildBase|AppPackageTaskTitaniumBuildBase>(buildOptions)) {
+			ExtensionContainer.addRecentBuild(buildOptions);
+		}
+	}
+
+	public createBuilder (): CommandBuilder {
+		if (ExtensionContainer.isUsingTi()) {
+			return CommandBuilder.create('ti', 'build');
+		} else {
+			return CommandBuilder.create('appc', 'run');
+		}
+	}
+
+	public getProject(projectDir: string): Project {
+		const project = ExtensionContainer.projects.get(projectDir);
+		if (!project) {
+			throw new Error(`Unable to find loaded project for ${projectDir}, please ensure it is active in the workspace`);
+		}
+		return project;
 	}
 }

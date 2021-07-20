@@ -2,14 +2,18 @@ import * as vscode from 'vscode';
 import { DeviceNode, OSVerNode, PlatformNode, TargetNode } from '../explorer/nodes';
 import { checkLogin, handleInteractionError, InteractionError } from './common';
 
-import { selectPlatform } from '../quickpicks/common';
-import { Platform, getPackageTask } from '../tasks/tasksHelper';
+import { promptForWorkspaceFolder, selectPlatform } from '../quickpicks/common';
+import { getPackageTask } from '../tasks/tasksHelper';
 import { PackageTask } from '../tasks/packageTaskProvider';
+import { Platform } from '../types/common';
 
-export async function packageModule (node: DeviceNode | OSVerNode | PlatformNode | TargetNode): Promise<void> {
+export async function packageModule (node: DeviceNode | OSVerNode | PlatformNode | TargetNode, folder?: vscode.WorkspaceFolder): Promise<void> {
 	try {
 		checkLogin();
 
+		if (!folder) {
+			folder = (await promptForWorkspaceFolder()).folder;
+		}
 		const platform = node?.platform as Platform || (await selectPlatform()).id as Platform;
 
 		const taskDefinition: PackageTask = {
@@ -17,7 +21,7 @@ export async function packageModule (node: DeviceNode | OSVerNode | PlatformNode
 				titaniumBuild: {
 					projectType: 'module',
 					platform,
-					projectDir: vscode.workspace.rootPath!
+					projectDir: folder.uri.fsPath
 				},
 				type: 'titanium-package',
 				name: `Package ${platform}`

@@ -47,6 +47,7 @@
             "request": "launch",
             "runtimeExecutable": "${execPath}",
             "args": [
+                "${workspaceFolder}/src/test/common/fixtures/alloy-project",
                 "--extensionDevelopmentPath=${workspaceFolder}",
                 "--extensionTestsPath=${workspaceFolder}/out/test/unit"
             ],
@@ -57,27 +58,9 @@
             "presentation": {
                 "group": "2_tests",
                 "order": 1
-            }
-        },
-        {
-            "name": "Extension Tests - Coverage",
-            "type": "extensionHost",
-            "request": "launch",
-            "runtimeExecutable": "${execPath}",
-            "args": [
-                "--extensionDevelopmentPath=${workspaceFolder}",
-                "--extensionTestsPath=${workspaceFolder}/out/test/unit"
-            ],
-            "outFiles": [
-                "${workspaceFolder}/out/test/unit/**/*.js"
-            ],
-            "preLaunchTask": "npm: watch",
-            "env": {
-                "COVERAGE": "true"
             },
-            "presentation": {
-                "group": "2_tests",
-                "order": 1
+            "env": {
+                "DEBUG": "1"
             }
         },
         {
@@ -90,6 +73,21 @@
             "presentation": {
                 "group": "2_tests",
                 "order": 1
+            }
+        },
+        {
+            "name": "Extension UI Smokes",
+            "type": "node",
+            "request": "launch",
+            "program": "${workspaceFolder}/out/test/integration/runTests.js",
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen",
+            "presentation": {
+                "group": "2_tests",
+                "order": 1
+            },
+            "env": {
+                "SMOKE": "1"
             }
         }
     ],

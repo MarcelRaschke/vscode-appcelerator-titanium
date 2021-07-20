@@ -3,36 +3,32 @@ import * as path from 'path';
 import * as xml2js from 'xml2js';
 import * as utils from './utils';
 
-import { EventEmitter, Range, window, workspace } from 'vscode';
+import { Range, window, workspace } from 'vscode';
 import { handleInteractionError, InteractionError } from './commands/common';
-import { Platform } from './types/common';
+import { Platform, ProjectType } from './types/common';
+import { parseXmlString } from './common/utils';
 
 const TIAPP_FILENAME = 'tiapp.xml';
 const TIMODULEXML_FILENAME = 'timodule.xml';
 const MANIFEST_FILENAME = 'manifest';
-const DASHBOARD_URL_ROOT = 'https://platform.axway.com/#/app/';
 
 interface ModuleInformation {
 	path: string;
+	platform: Platform;
 	[ key: string ]: string;
 }
 
 export class Project {
-
-	public isTitaniumApp = false;
-	public isTitaniumModule = false;
 	public isValidTiapp = false;
+	public filePath: string;
+	public type: ProjectType;
 
 	private tiapp: any;
 	private modules: ModuleInformation[] = [];
-	private emitter: EventEmitter<void>|undefined;
 
-	/**
-	 * Check if the current project is a Titanium app or module.
-	 * @returns {Boolean} Whether the project is a Titanium app or module.
-	 */
-	public isTitaniumProject (): boolean {
-		return this.isTitaniumApp || this.isTitaniumModule;
+	constructor(filePath: string, type: ProjectType) {
+		this.filePath = filePath;
+		this.type = type;
 	}
 
 	/**
@@ -46,25 +42,11 @@ export class Project {
 	/**
 	 * Load tiapp.xml file
 	 */
-	public load (): void {
-		this.isTitaniumApp = false;
-		this.isTitaniumModule = false;
-
-		this.loadTiappFile();
-
-		if (!this.isTitaniumApp) {
-			this.loadModules();
-		}
-	}
-
-	/**
-	 * Register on modified callback
-	 *
-	 * @param {Function} callback	callback function
-	 */
-	public onModified (callback: () => void): void {
-		if (this.isTitaniumApp && this.emitter) {
-			this.emitter.event(callback);
+	public async load (): Promise<void> {
+		if (this.type === 'app') {
+			await this.loadTiappFile();
+		} else if (this.type === 'module') {
+			await this.loadModules();
 		}
 	}
 
@@ -74,7 +56,7 @@ export class Project {
 	 * @returns {String}
 	 */
 	public appId (): string {
-		if (this.isTitaniumApp) {
+		if (this.type === 'app') {
 			return String(this.tiapp.id);
 		}
 		throw new Error('Project is not a Titanium application');
@@ -86,18 +68,10 @@ export class Project {
 	 * @returns {String}
 	 */
 	public appName (): string {
-		if (this.isTitaniumApp) {
+		if (this.type === 'app') {
 			return String(this.tiapp.name);
 		} else {
 			return this.modules[0].name;
-		}
-	}
-
-	public dashboardUrl (): string|undefined {
-		// this.tiapp.property[2].$.name
-		const appcAppIdProperty = this.tiapp.property.find((property: { $: { name: string }}) => property.$.name === 'appc-app-id');
-		if (appcAppIdProperty) {
-			return path.join(DASHBOARD_URL_ROOT, appcAppIdProperty._);
 		}
 	}
 
@@ -107,7 +81,7 @@ export class Project {
 	 * @returns {Array}
 	 */
 	public platforms (): string[]|undefined {
-		if (this.isTitaniumModule) {
+		if (this.type === 'module') {
 			return this.modules.map((mod) => mod.platform);
 		}
 	}
@@ -131,19 +105,10 @@ export class Project {
 	 * @returns {String}
 	 */
 	public sdk (): string[] {
-		if (this.isTitaniumApp) {
+		if (this.type === 'app') {
 			return this.tiapp['sdk-version'];
 		}
 		return [];
-	}
-
-	/**
-	 * Dispose of resources
-	 */
-	public dispose (): void {
-		if (this.emitter) {
-			this.emitter.dispose();
-		}
 	}
 
 	/**
@@ -151,74 +116,51 @@ export class Project {
 	 *
 	 */
 	private async loadTiappFile  (): Promise<void> {
-		this.isTitaniumApp = false;
 		this.isValidTiapp = false;
-		let error: InteractionError | undefined;
-		const rootPath = workspace.rootPath;
-		if (!rootPath) {
+		const filePath = path.join(this.filePath, TIAPP_FILENAME);
+
+		if (!await fs.pathExists(filePath)) {
 			return;
 		}
-		const filePath = path.join(rootPath, TIAPP_FILENAME);
-		if (utils.fileExists(filePath)) {
-			this.isTitaniumApp = true;
-			const fileData = fs.readFileSync(filePath, 'utf-8');
-			const parser = new xml2js.Parser();
-			let json;
-			parser.parseString(fileData, (err: Error, result: unknown) => {
-				if (err) {
-					let line: number;
-					let column: number;
-					let message = 'Errors found in tiapp.xml';
-					const columnExp = /Column: (.*?)(?:\s|$)/g;
-					const lineExp = /Line: (.*?)(?:\s|$)/g;
-					const columnMatch = columnExp.exec(err.message);
-					const lineMatch = lineExp.exec(err.message);
 
-					if (lineMatch) {
-						line = parseInt(lineMatch[1], 10);
-						message = `${message} on line ${line + 1}`;
-					}
-
-					if (columnMatch) {
-						column = parseInt(columnMatch[1], 10);
-						message = `${message} in column ${column + 1}`;
-					}
-
-					error = new InteractionError(message);
-					error.interactionChoices.push({
-						title: 'Open tiapp.xml',
-						run: async () => {
-							const file = path.join(workspace.rootPath!, 'tiapp.xml');
-							const document = await workspace.openTextDocument(file);
-							const linePrefix = new Range(line, 0, line, column);
-							await window.showTextDocument(document.uri, { selection: linePrefix });
-						}
-					});
-					return error;
-				}
-				json = result;
-				this.isValidTiapp = true;
-			});
-
-			if (!this.emitter) {
-				this.emitter = new EventEmitter();
-				workspace.onDidSaveTextDocument(event => {
-					if (event.fileName === filePath) {
-						this.loadTiappFile();
-						if (this.emitter) {
-							this.emitter.fire();
-						}
-					}
-				});
-			}
+		try {
+			const fileData = await fs.readFile(filePath, 'utf-8');
+			const json = await parseXmlString(fileData) as any;
+			this.isValidTiapp = true;
 
 			if (json && json['ti:app']) {
 				this.tiapp = json['ti:app'];
 			}
+		} catch (err) {
+			let line: number;
+			let column: number;
+			let message = 'Errors found in tiapp.xml';
+			const columnExp = /Column: (.*?)(?:\s|$)/g;
+			const lineExp = /Line: (.*?)(?:\s|$)/g;
+			const columnMatch = columnExp.exec(err.message);
+			const lineMatch = lineExp.exec(err.message);
 
-			if (error instanceof InteractionError) {
-				await handleInteractionError(error);
+			if (lineMatch) {
+				line = parseInt(lineMatch[1], 10);
+				message = `${message} on line ${line + 1}`;
 			}
+
+			if (columnMatch) {
+				column = parseInt(columnMatch[1], 10);
+				message = `${message} in column ${column + 1}`;
+			}
+
+			const error = new InteractionError(message);
+			error.interactionChoices.push({
+				title: 'Open tiapp.xml',
+				run: async () => {
+					const file = path.join(this.filePath, 'tiapp.xml');
+					const document = await workspace.openTextDocument(file);
+					const linePrefix = new Range(line, 0, line, column);
+					await window.showTextDocument(document.uri, { selection: linePrefix });
+				}
+			});
+			await handleInteractionError(error);
 		}
 	}
 
@@ -226,15 +168,11 @@ export class Project {
 	 * Attempt to find module projects by loading timodule.xml and manifest files
 	 */
 	private loadModules (): void {
-		const rootPath = workspace.rootPath;
-		if (!rootPath) {
-			return;
-		}
 		const paths = [
-			path.join(rootPath),
-			path.join(rootPath, 'android'),
-			path.join(rootPath, 'ios'),
-			path.join(rootPath, 'iphone'),
+			path.join(this.filePath),
+			path.join(this.filePath, 'android'),
+			path.join(this.filePath, 'ios'),
+			path.join(this.filePath, 'iphone'),
 		];
 		for (let i = 0, numPaths = paths.length; i < numPaths; i++) {
 			this.loadModuleAt(paths[i]);
@@ -246,47 +184,68 @@ export class Project {
 	 *
 	 * @param {String} modulePath		path to module
 	 */
-	private loadModuleAt (modulePath: string): void {
-		if (utils.directoryExists(modulePath)) {
-			const timodulePath = path.join(modulePath, TIMODULEXML_FILENAME);
-			const manifestPath = path.join(modulePath, MANIFEST_FILENAME);
+	private async loadModuleAt (modulePath: string): Promise<void> {
+		const timodulePath = path.join(modulePath, TIMODULEXML_FILENAME);
+		const manifestPath = path.join(modulePath, MANIFEST_FILENAME);
 
-			if (!utils.fileExists(timodulePath)) {
+		if (!await fs.pathExists(timodulePath)) {
+			return;
+		}
+
+		const fileData = fs.readFileSync(timodulePath, 'utf-8');
+		const parser = new xml2js.Parser();
+		let json;
+		parser.parseString(fileData, (err: Error, result: unknown) => {
+			if (!err) {
+				json = result;
+			}
+		});
+		if (json && json['ti:module']) {
+
+			if (!fs.existsSync(manifestPath)) {
 				return;
 			}
 
-			const fileData = fs.readFileSync(timodulePath, 'utf-8');
-			const parser = new xml2js.Parser();
-			let json;
-			parser.parseString(fileData, (err: Error, result: unknown) => {
-				if (!err) {
-					json = result;
+			const manifestData: { [ key: string ]: string; } = {};
+
+			fs.readFileSync(manifestPath).toString().split(/\r?\n/).forEach(line => {
+				const match = line.match(/^(\S+)\s*:\s*(.*)$/);
+				if (match) {
+					manifestData[match[1].trim()] = match[2].trim();
 				}
 			});
-			if (json && json['ti:module']) {
 
-				if (!fs.existsSync(manifestPath)) {
-					return;
-				}
+			const moduleInformation: ModuleInformation = {
+				path: modulePath,
+				platform: utils.normalisedPlatform(manifestData.platform as Platform),
+				...manifestData
+			};
 
-				const manifest: ModuleInformation = {
-					path: modulePath
-				};
+			this.modules.push(moduleInformation);
+		}
+	}
 
-				fs.readFileSync(manifestPath).toString().split(/\r?\n/).forEach(line => {
-					const match = line.match(/^(\S+)\s*:\s*(.*)$/);
-					if (match) {
-						manifest[match[1].trim()] = match[2].trim();
-					}
-				});
-				manifest.platform = utils.normalisedPlatform(manifest.platform);
+	async isAlloyProject(): Promise<boolean> {
+		if (this.type !== 'app') {
+			return false;
+		}
 
-				this.modules.push(manifest);
+		if (await fs.pathExists(path.join(this.filePath, 'app'))) {
+			return true;
+		} else {
+			return false;
+		}
+	}
 
-				this.isTitaniumModule = true;
-			}
+	async getI18NPath (): Promise<string|undefined> {
+		if (this.type !== 'app') {
+			return;
+		}
+
+		if (await this.isAlloyProject()) {
+			return path.join(this.filePath, 'app', 'i18n');
+		} else {
+			return path.join(this.filePath, 'i18n');
 		}
 	}
 }
-
-export default new Project();

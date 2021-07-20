@@ -1,21 +1,38 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as semver from 'semver';
+import * as vscode from 'vscode';
 
 import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { ExtensionContainer } from './container';
-import { IosCert, IosCertificateType, ProvisioningProfile } from './types/common';
+import { IosCert, IosCertificateType, IosProvisioningType, ProvisioningProfile } from './types/common';
 import { AndroidEmulator, AppcInfo, IosDevice, IosSimulator, TitaniumSDK, AndroidDevice } from './types/environment-info';
 import { iOSProvisioningProfileMatchesAppId } from './utils';
 import { GlobalState } from './constants';
+import { AlloyComponentType, InteractionError } from './commands';
+import { CommandResponse } from './common/utils';
 
 export interface AlloyGenerateOptions {
-	adapterType?: string;
 	cwd: string;
 	force?: boolean;
-	type: string;
+	type: Exclude<AlloyComponentType, AlloyComponentType.Model>;
 	name: string;
+}
+
+export interface AlloyModelGenerateOptions {
+	cwd: string;
+	force?: boolean;
+	adapterType: string;
+	type: AlloyComponentType.Model;
+	name: string;
+}
+
+function isModelType(options: AlloyGenerateOptions|AlloyModelGenerateOptions): options is AlloyModelGenerateOptions {
+	if (options.type === AlloyComponentType.Model) {
+		return true;
+	}
+	return false;
 }
 
 export class Appc {
@@ -41,23 +58,48 @@ export class Appc {
 	 *
 	 * @param {Function} callback	callback function
 	 */
-	public getInfo (callback: (error: Error|null, info?: AppcInfo) => void): void {
-		ExtensionContainer.context.globalState.update(GlobalState.RefreshEnvironment, true);
-		let result = '';
-		const proc = spawn('appc', [ 'info', '-o', 'json' ], { shell: true });
-		proc.stdout.on('data', data => result += data);
-		proc.on('close', () => {
-			ExtensionContainer.context.globalState.update(GlobalState.RefreshEnvironment, false);
-			if (result && result.length) {
-				try {
-					this.info = JSON.parse(result);
-					return callback(null, this.info);
-				} catch (error) {
-					return callback(error);
-				}
-			} else {
-				callback(new Error('Failed to get environment information'));
+	public async getInfo (): Promise<void> {
+		return new Promise((resolve, reject) => {
+			ExtensionContainer.context.globalState.update(GlobalState.RefreshEnvironment, true);
+			let result = '';
+			let output = '';
+
+			const command = ExtensionContainer.isUsingTi() ? 'ti' : 'appc';
+			const args = [ 'info', '-o', 'json' ];
+			if (!ExtensionContainer.isUsingTi()) {
+				args.unshift('ti');
+				args.push('--no-prompt');
 			}
+
+			const proc = spawn(command, args, { shell: true });
+			proc.stdout.on('data', data => {
+				result += data;
+				output += data;
+			});
+			proc.stderr.on('data', data => output += data);
+			proc.on('close', (code) => {
+				ExtensionContainer.context.globalState.update(GlobalState.RefreshEnvironment, false);
+				if (code) {
+					const error = new InteractionError('Failed to get environment information');
+					error.interactionChoices.push({
+						title: 'View Error',
+						run() {
+							const channel = vscode.window.createOutputChannel('Appcelerator');
+							channel.append(output);
+							channel.show();
+						}
+					});
+					return reject(error);
+				}
+				if (result && result.length) {
+					try {
+						this.info = JSON.parse(result);
+						return resolve();
+					} catch (error) {
+						return reject(error);
+					}
+				}
+			});
 		});
 	}
 
@@ -177,7 +219,7 @@ export class Appc {
 
 	public iOSSimulatorVersions (): string[] {
 		const sims = this.iOSSimulators();
-		return Object.keys(sims).sort((a, b) => semver.compare(semver.coerce(a)!, semver.coerce(b)!)).reverse();
+		return Object.keys(sims).sort((a, b) => semver.compare(semver.coerce(a) || a, semver.coerce(b) || b)).reverse();
 	}
 
 	/**
@@ -260,7 +302,7 @@ export class Appc {
 	 * @param {String} type     developer (default), distribution
 	 * @returns {Array}
 	 */
-	public iOSCertificates (type: IosCertificateType = IosCertificateType.developer): IosCert[] {
+	public iOSCertificates (type: IosCertificateType = 'developer'): IosCert[] {
 		const certificates = [];
 		if (this.info?.ios?.certs) {
 			for (const keychain of Object.values(this.info.ios.certs.keychains)) {
@@ -278,7 +320,7 @@ export class Appc {
 	 * @param {String} appId        enable by matching app ID
 	 * @returns {Array}
 	 */
-	public iOSProvisioningProfiles (deployment = 'development', certificate: IosCert, appId: string): ProvisioningProfile[] {
+	public iOSProvisioningProfiles (deployment: IosProvisioningType = 'development', certificate: IosCert, appId: string): ProvisioningProfile[] {
 		let pem: string|undefined;
 		if (certificate.pem) {
 			pem = certificate.pem.replace('-----BEGIN CERTIFICATE-----', '');
@@ -315,38 +357,43 @@ export class Appc {
 	/**
 	 * Run `appc alloy generate` command
 	 *
-	 * @param {Object} opts - arguments.
-	 * @param {String} [opts.adapterType] - Adapter to use for Alloy model
-	 * @param {String} opts.cwd - Directory of the app.
-	 * @param {Boolean} opts.force - Force creation of the component, will overwrite existing component.
-	 * @param {String} opts.name -  Name of the component.
-	 * @param {String} opts.type - Type to generate.
+	 * @param {AlloyGenerateOptions|AlloyModelGenerateOptions} options - arguments.
+	 * @param {String} [options.adapterType] - Adapter to use for Alloy model
+	 * @param {String} options.cwd - Directory of the app.
+	 * @param {Boolean} options.force - Force creation of the component, will overwrite existing component.
+	 * @param {String} options.name -  Name of the component.
+	 * @param {String} options.type - Type to generate.
 	 * @returns {Promise}
 	 */
-	public generate ({ adapterType, cwd, force, name, type }: AlloyGenerateOptions): Promise<void> {
-		return new Promise((resolve, reject) => {
-			const args = [ 'alloy', 'generate', type, name ];
-			if (type === 'model') {
-				args.push(adapterType!);
-			}
-			if (force) {
-				args.push('--force');
-			}
-			const proc = spawn('appc', args, { cwd, shell: true });
+	public generate (options: AlloyGenerateOptions|AlloyModelGenerateOptions): Promise<CommandResponse> {
+		const { cwd, force, name, type } = options;
+		const command = ExtensionContainer.isUsingTi() ? 'alloy' : 'appc';
+		const args = [ 'generate', type, name ];
 
-			proc.on('close', code => {
-				if (code) {
-					// handle error
-					return reject();
-				}
-				return resolve();
-			});
-		});
+		if (isModelType(options)) {
+			args.push(options.adapterType);
+		}
+
+		if (force) {
+			args.push('--force');
+		}
+
+		if (!ExtensionContainer.isUsingTi()) {
+			args.unshift('alloy');
+		}
+
+		return ExtensionContainer.terminal.runInBackground(command, args, { cwd });
 	}
 
 	public getAdbPath (): string|undefined {
 		if (this.info?.android?.sdk?.executables) {
 			return this.info.android.sdk.executables.adb;
+		}
+	}
+
+	public getKeytoolPath (): string|undefined {
+		if (this.info?.jdk.executables.keytool) {
+			return this.info?.jdk.executables.keytool;
 		}
 	}
 

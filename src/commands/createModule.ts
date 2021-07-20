@@ -2,13 +2,13 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import Appc from '../appc';
 
-import { commands, ProgressLocation, Uri, window } from 'vscode';
+import { commands, ProgressLocation, Uri, window, workspace } from 'vscode';
 import { VSCodeCommands, WorkspaceState } from '../constants';
 import { ExtensionContainer } from '../container';
 import { inputBox, selectCodeBases, selectCreationLocation, selectPlatforms, yesNoQuestion } from '../quickpicks';
 import { createModuleArguments, validateAppId } from '../utils';
 import { checkLogin, handleInteractionError, InteractionError } from './common';
-import { promisify } from 'util';
+import { CommandError } from '../common/utils';
 
 export async function createModule (): Promise<void> {
 	try {
@@ -16,7 +16,7 @@ export async function createModule (): Promise<void> {
 
 		// force a refresh of the environment information to make sure that we have the correct
 		// selected SDK and CLI
-		await promisify(Appc.getInfo).bind(Appc)();
+		await Appc.getInfo();
 
 		let force = false;
 		const logLevel = ExtensionContainer.config.general.logLevel;
@@ -38,6 +38,9 @@ export async function createModule (): Promise<void> {
 		ExtensionContainer.context.workspaceState.update(WorkspaceState.LastCreationPath, workspaceDir.fsPath);
 		if (await fs.pathExists(path.join(workspaceDir.fsPath, name))) {
 			force = await yesNoQuestion({ placeHolder: 'That module already exists. Would you like to overwrite?' }, true);
+			if (!force) {
+				throw new InteractionError('Module already exists and chose to not overwrite');
+			}
 		}
 
 		const args = createModuleArguments({
@@ -49,16 +52,38 @@ export async function createModule (): Promise<void> {
 			workspaceDir: workspaceDir.fsPath,
 			codeBases
 		});
-		await ExtensionContainer.terminal.runCommandInBackground(args, { cancellable: false, location: ProgressLocation.Notification, title: 'Creating module' });
-		// TODO: Once workspace support is figured out, add an "add to workspace command"
-		const dialog = await window.showInformationMessage('Project created. Would you like to open it?', { title: 'Open Project' });
-		if (dialog) {
-			const projectDir = Uri.file(path.join(workspaceDir.fsPath, name));
+
+		await window.withProgress({ cancellable: false, location: ProgressLocation.Notification }, async (progress) => {
+			progress.report({ message: 'Creating module' });
+			const command = ExtensionContainer.isUsingTi() ? 'ti' : 'appc';
+			await ExtensionContainer.terminal.runInBackground(command, args);
+			return;
+		});
+
+		const projectDir = Uri.file(path.join(workspaceDir.fsPath, name));
+		const dialog = await window.showInformationMessage('Project created. Would you like to open it?', { title: 'Open in new window', id: 'window' }, { title: 'Open in workspace', id: 'workspace' });
+		if (dialog?.id === 'window') {
 			await commands.executeCommand(VSCodeCommands.OpenFolder, projectDir, true);
+		} else if (dialog?.id === 'workspace') {
+			await workspace.updateWorkspaceFolders(0, 0, { uri: projectDir });
 		}
 	} catch (error) {
 		if (error instanceof InteractionError) {
 			await handleInteractionError(error);
+		} else if (error instanceof CommandError) {
+			const choices = [];
+			if (error.output) {
+				choices.push('View Error');
+			}
+
+			const action = await window.showErrorMessage('Failed to create application', ...choices);
+			if (error.output && action === 'View Error') {
+				const channel = window.createOutputChannel('Titanium');
+				channel.append(`${error.command}\n`);
+				channel.append(error.output);
+				channel.show();
+			}
+			console.log(error);
 		}
 	}
 }

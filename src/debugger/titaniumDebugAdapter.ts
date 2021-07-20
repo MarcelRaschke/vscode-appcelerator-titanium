@@ -1,24 +1,31 @@
 import { ProxyServer } from '@awam/remotedebug-ios-webkit-adapter';
-import { ChromeDebugAdapter, Crdp } from '@awam/vscode-chrome-debug-core';
-import * as got from 'got';
+import { ChromeDebugAdapter, Crdp } from 'vscode-chrome-debug-core';
+import got from 'got';
 import { sleep } from '../common/utils';
 import { URL } from 'url';
 import { Event } from 'vscode-debugadapter';
 import { DebugProtocol } from 'vscode-debugprotocol';
 import { MESSAGE_STRING, Request, Response, TitaniumAttachRequestArgs, TitaniumLaunchRequestArgs } from '../common/extensionProtocol';
 
+interface IWDBResponse {
+	metadata: {
+		deviceId: string;
+		url: string
+	};
+	webSocketDebuggerUrl: string
+}
+
 export class TitaniumDebugAdapter extends ChromeDebugAdapter {
 
 	private activeRequests = new Map();
 	private deviceId: string|undefined;
 	private idCount = 0;
-	private isDisconnecting = false;
 	private platform: string|undefined;
 	private port: number|undefined;
 	private server!: ProxyServer;
 	private target: string|undefined;
 
-	public commonArgs (args: TitaniumLaunchRequestArgs): void {
+	public override commonArgs (args: TitaniumLaunchRequestArgs): void {
 		args.sourceMaps = typeof args.sourceMaps === 'undefined' || args.sourceMaps;
 		this.deviceId = args.deviceId;
 		this.platform = args.platform;
@@ -27,7 +34,7 @@ export class TitaniumDebugAdapter extends ChromeDebugAdapter {
 		super.commonArgs(args);
 	}
 
-	public async launch (launchArgs: TitaniumLaunchRequestArgs): Promise<void> {
+	public override async launch (launchArgs: TitaniumLaunchRequestArgs): Promise<void> {
 		const info: any = await this.sendRequest('BUILD', launchArgs);
 
 		if (info.isError) {
@@ -47,7 +54,7 @@ export class TitaniumDebugAdapter extends ChromeDebugAdapter {
 		return this.attach(launchArgs);
 	}
 
-	public attach (attachArgs: TitaniumAttachRequestArgs): Promise<void> {
+	public override attach (attachArgs: TitaniumAttachRequestArgs): Promise<void> {
 		const { platform } = attachArgs;
 		if (platform === 'android') {
 			return this.attachAndroid(attachArgs);
@@ -58,13 +65,12 @@ export class TitaniumDebugAdapter extends ChromeDebugAdapter {
 		}
 	}
 
-	public async disconnect (args: DebugProtocol.DisconnectArguments): Promise<void> {
-		this.isDisconnecting = true;
+	public override async disconnect (args: DebugProtocol.DisconnectArguments): Promise<void> {
 		await this.cleanup();
 		return super.disconnect(args);
 	}
 
-	protected globalEvaluate (args: Crdp.Runtime.EvaluateRequest): Promise<Crdp.Runtime.EvaluateResponse> {
+	protected override globalEvaluate (args: Crdp.Runtime.EvaluateRequest): Promise<Crdp.Runtime.EvaluateResponse> {
 		// On Android we don't correctly handle no contextId being sent in an evaluate request
 		if (this.platform === 'android' && !args.contextId) {
 			args.contextId = 1;
@@ -73,8 +79,11 @@ export class TitaniumDebugAdapter extends ChromeDebugAdapter {
 		return super.globalEvaluate(args);
 	}
 
-	private attachAndroid (attachArgs: TitaniumAttachRequestArgs): Promise<void> {
-		return super.attach(attachArgs);
+	private async attachAndroid (attachArgs: TitaniumAttachRequestArgs): Promise<void> {
+		// Rather than attaching straight away, wait for a small amount of time to allow the app
+		// to load and setup the debugger
+		await sleep(500);
+		await super.attach(attachArgs);
 	}
 
 	private async attachIOS (attachArgs: TitaniumAttachRequestArgs): Promise<void> {
@@ -114,7 +123,7 @@ export class TitaniumDebugAdapter extends ChromeDebugAdapter {
 		return super.attach(attachArgs);
 	}
 
-	private async pollForApp (url: string, errorMessage: string, maxRetries = 5, iteration = 0): Promise<Array<{ metadata: { deviceId: string; url: string }; webSocketDebuggerUrl: string }>> {
+	private async pollForApp (url: string, errorMessage: string, maxRetries = 5, iteration = 0): Promise<IWDBResponse[]> {
 		if (iteration > maxRetries) {
 			throw Error(errorMessage);
 		}
@@ -123,8 +132,8 @@ export class TitaniumDebugAdapter extends ChromeDebugAdapter {
 
 		let body;
 		try {
-			const resp = await got(url, {
-				json: true
+			const resp = await got<IWDBResponse[]>(url, {
+				responseType: 'json'
 			});
 			body = resp.body;
 		} catch (error) {

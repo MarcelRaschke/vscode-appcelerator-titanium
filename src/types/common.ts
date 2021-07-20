@@ -1,3 +1,4 @@
+import { AppBuildTaskTitaniumBuildBase } from '../tasks/buildTaskProvider';
 import { UpdateInfo } from 'titanium-editor-commons/updates';
 
 export interface KeystoreInfo {
@@ -41,23 +42,23 @@ export enum LogLevel {
 	Warn = 'warn'
 }
 
-export enum IosCertificateType {
-	developer = 'developer',
-	distribution = 'distribution'
-}
+export type IosCertificateType = 'developer' | 'distribution';
 
-export enum PlatformPretty {
-	android = 'Android',
-	ios = 'iOS'
-}
+export type IosProvisioningType = 'development' | 'distribution' | 'appstore';
 
-export enum Platform {
-	android = 'android',
-	ios = 'ios'
-}
+export type PlatformPretty = 'Android' | 'iOS';
+
+export type Platform = 'android' | 'ios';
 
 export interface UpdateChoice extends Omit<UpdateInfo, 'hasUpdate' | 'releaseNotes'> {
 	label: string;
 	picked: boolean;
 	id: string;
 }
+
+export interface LastBuildState extends AppBuildTaskTitaniumBuildBase {
+	deviceId: string;
+	target: 'device' | 'emulator' | 'simulator';
+}
+
+export type ProjectType = 'app' | 'module';

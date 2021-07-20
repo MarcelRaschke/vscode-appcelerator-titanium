@@ -1,12 +1,11 @@
-export const ExtensionId = 'titanium';
+export const ExtensionName = 'titanium';
+export const ExtensionId = 'axway.vscode-titanium';
 
 export enum VSCodeCommands {
 	OpenFolder = 'vscode.openFolder',
-	SetContext = 'setContext'
-}
-
-export enum CommandContext {
-
+	ReportIssue = 'vscode.openIssueReporter',
+	SetContext = 'setContext',
+	OpenSettings = 'workbench.action.openSettings'
 }
 
 export enum GlobalState {
@@ -15,7 +14,10 @@ export enum GlobalState {
 	Running = 'titanium:build:running',
 	LastUpdateCheck = 'titanium:update:lastCheck',
 	HasUpdates = 'titanium:update:hasUpdates',
-	RefreshEnvironment = 'titanium:environment:refresh'
+	RefreshEnvironment = 'titanium:environment:refresh',
+	MissingTooling = 'titanium:toolingMissing',
+	NotTitaniumProject = 'titanium:notProject',
+	NeedsTrustedWorkspace = 'titanium:needsTrustedWorkspace'
 }
 
 export enum WorkspaceState {
@@ -24,5 +26,6 @@ export enum WorkspaceState {
 	LastKeystorePath = 'lastKeystorePath',
 	LastCreationPath = 'lastCreationPath',
 	LastAndroidDebug = 'lastAndroidDebugOptions',
-	LastiOSDebug = 'lastiOSDebugOptions'
+	LastiOSDebug = 'lastiOSDebugOptions',
+	RecentBuilds = 'recentBuilds'
 }

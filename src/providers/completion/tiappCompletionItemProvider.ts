@@ -1,14 +1,14 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import appc from '../../appc';
-import * as utils from '../../utils';
 
-import { CompletionItem, CompletionItemKind, CompletionItemProvider, Position, Range, TextDocument, workspace } from 'vscode';
+import { CompletionItem, CompletionItemKind, Position, Range, TextDocument } from 'vscode';
+import { BaseCompletionItemProvider } from './baseCompletionItemProvider';
 /**
  * Tiapp.xml completion provider
  */
 
-export class TiappCompletionItemProvider implements CompletionItemProvider {
+export class TiappCompletionItemProvider extends BaseCompletionItemProvider {
 
 	/**
 	 * Provide completion items
@@ -20,7 +20,13 @@ export class TiappCompletionItemProvider implements CompletionItemProvider {
 	 *
 	 * @returns {Thenable|Array}
 	 */
-	public provideCompletionItems (document: TextDocument, position: Position): CompletionItem[] {
+	public async provideCompletionItems (document: TextDocument, position: Position): Promise<CompletionItem[]> {
+		const project = await this.getProject(document);
+
+		if (!project) {
+			return [];
+		}
+
 		const linePrefix = document.getText(new Range(position.line, 0, position.line, position.character));
 		const completions: CompletionItem[] = [];
 		let tag;
@@ -41,7 +47,7 @@ export class TiappCompletionItemProvider implements CompletionItemProvider {
 					continue;
 				}
 				completions.push({
-					label: sdk.fullversion!,
+					label: sdk.fullversion || sdk.version,
 					kind: CompletionItemKind.Value,
 					insertText: sdk.fullversion?.replace(sdkVersion, '')
 				});
@@ -53,13 +59,14 @@ export class TiappCompletionItemProvider implements CompletionItemProvider {
 			 * - Add support for adding to the platform property
 			 * - Add support for the deploy type tag
 			 */
-			const modulePath = path.join(workspace.rootPath!, 'modules');
-			if (!utils.directoryExists(modulePath)) {
+			const modulePath = path.join(project.filePath, 'modules');
+
+			if (!await fs.pathExists(modulePath)) {
 				return completions;
 			}
 			const modules: { [key: string]: { platforms: string[] } } = {};
 			for (const platform of this.getDirectories(modulePath)) {
-				const platformModulePath = path.join(workspace.rootPath!, 'modules', platform);
+				const platformModulePath = path.join(project.filePath, 'modules', platform);
 				for (const moduleName of this.getDirectories(platformModulePath)) {
 					if (!modules[moduleName]) {
 						modules[moduleName] = {
